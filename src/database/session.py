@@ -106,11 +106,19 @@ class DatabaseSessionManager:
             # (表名, 列名, 列类型)
             ("accounts", "cpa_uploaded", "BOOLEAN DEFAULT 0"),
             ("accounts", "cpa_uploaded_at", "DATETIME"),
+            ("accounts", "aether_uploaded", "BOOLEAN DEFAULT 0"),
+            ("accounts", "aether_uploaded_at", "DATETIME"),
             ("accounts", "source", "VARCHAR(20) DEFAULT 'register'"),
             ("accounts", "subscription_type", "VARCHAR(20)"),
             ("accounts", "subscription_at", "DATETIME"),
             ("accounts", "cookies", "TEXT"),
             ("proxies", "is_default", "BOOLEAN DEFAULT 0"),
+            ("aether_services", "api_formats", "VARCHAR(255) DEFAULT 'openai:cli'"),
+            ("aether_services", "auth_type", "VARCHAR(50) DEFAULT 'oauth'"),
+            ("aether_services", "extra_payload", "TEXT"),
+            ("aether_services", "device_id", "VARCHAR(100)"),
+            ("aether_services", "admin_email", "VARCHAR(255)"),
+            ("aether_services", "admin_password", "TEXT"),
         ]
 
         # 确保新表存在（create_tables 已处理，此处兜底）

@@ -7,6 +7,8 @@ import logging
 import re
 from typing import Optional
 
+from ..proxy_utils import normalize_proxy_url
+
 logger = logging.getLogger(__name__)
 
 
@@ -82,6 +84,7 @@ def fetch_dynamic_proxy(api_url: str, api_key: str = "", api_key_header: str = "
         if not re.match(r'^(http|socks5)://', proxy_url):
             proxy_url = "http://" + proxy_url
 
+        proxy_url = normalize_proxy_url(proxy_url)
         logger.info(f"动态代理获取成功: {proxy_url[:40]}..." if len(proxy_url) > 40 else f"动态代理获取成功: {proxy_url}")
         return proxy_url
 

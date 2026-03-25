@@ -203,6 +203,33 @@
 
             <!-- 上传服务设置（CPA + Sub2API + Team Manager） -->
             <div class="tab-content" id="upload-tab">
+                <!-- Aether 服务管理 -->
+                <div class="card" style="margin-top: var(--spacing-lg);">
+                    <div class="card-header">
+                        <h3>🪐 Aether 服务</h3>
+                        <button class="btn btn-primary btn-sm" id="add-aether-service-btn">+ 添加服务</button>
+                    </div>
+                    <div class="card-body" style="padding: 0;">
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width:150px;">名称</th>
+                                        <th>站点地址</th>
+                                        <th style="width:140px;">Provider ID</th>
+                                        <th style="width:80px;">状态</th>
+                                        <th style="width:60px;text-align:center;">优先级</th>
+                                        <th style="width:220px;">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="aether-services-table">
+                                    <tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px;">加载中...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- CPA 服务管理 -->
                 <div class="card" style="margin-top: var(--spacing-lg);">
                     <div class="card-header">
@@ -278,6 +305,95 @@
                                 </tbody>
                             </table>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Aether 服务编辑模态框 -->
+            <div class="modal" id="aether-service-edit-modal">
+                <div class="modal-content" style="max-width: 560px;">
+                    <div class="modal-header">
+                        <h3 id="aether-service-modal-title">添加 Aether 服务</h3>
+                        <button class="modal-close" id="close-aether-service-modal">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <form id="aether-service-form">
+                            <input type="hidden" id="aether-service-id">
+                            <input type="hidden" id="aether-service-device-id">
+                            <div class="form-group">
+                                <label for="aether-service-name">名称 *</label>
+                                <input type="text" id="aether-service-name" placeholder="例如: 主 Aether" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="aether-service-url">站点地址 *</label>
+                                <input type="text" id="aether-service-url" placeholder="http://8.217.136.202:8084/admin/pool" required>
+                                <p class="hint">支持填写根地址、`/admin`、`/admin/pool` 或 `/swagger` 页面地址。</p>
+                            </div>
+                            <div class="form-group">
+                                <label for="aether-service-token">管理员 Token *</label>
+                                <input type="password" id="aether-service-token" placeholder="编辑时留空则保持原值" autocomplete="new-password">
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="aether-admin-email">管理员邮箱</label>
+                                    <input type="text" id="aether-admin-email" placeholder="admin@example.com">
+                                </div>
+                                <div class="form-group">
+                                    <label for="aether-admin-password">管理员密码</label>
+                                    <input type="password" id="aether-admin-password" placeholder="用于换取 access_token" autocomplete="new-password">
+                                </div>
+                            </div>
+                            <div class="form-actions" style="justify-content:flex-start;margin-top:-4px;">
+                                <button type="button" class="btn btn-secondary btn-sm" id="login-aether-btn">🔐 登录获取 Token</button>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="aether-service-provider-id">Provider ID *</label>
+                                    <input type="text" id="aether-service-provider-id" placeholder="provider-001" required>
+                                    <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap;">
+                                        <button type="button" class="btn btn-secondary btn-sm" id="fetch-aether-providers-btn">🔄 获取 Provider</button>
+                                        <select id="aether-provider-select" style="min-width:220px;">
+                                            <option value="">先获取后选择</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="aether-service-auth-type">认证类型</label>
+                                    <select id="aether-service-auth-type">
+                                        <option value="oauth">OAuth</option>
+                                        <option value="api_key">API Key</option>
+                                        <option value="service_account">Service Account</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="aether-service-api-formats">API Formats</label>
+                                <input type="text" id="aether-service-api-formats" placeholder="openai:cli">
+                                <p class="hint">多个值用英文逗号分隔，例如 `openai:cli,openai:chat`。</p>
+                            </div>
+                            <div class="form-group">
+                                <label for="aether-service-extra-payload">额外 Payload（可选 JSON）</label>
+                                <textarea id="aether-service-extra-payload" rows="4" placeholder='{"pool_enabled": true}'></textarea>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="aether-service-priority">优先级</label>
+                                    <input type="number" id="aether-service-priority" value="0" min="0">
+                                    <p class="hint">数字越小优先级越高</p>
+                                </div>
+                                <div class="form-group">
+                                    <label>&nbsp;</label>
+                                    <label style="margin-top:10px;display:flex;align-items:center;gap:8px;">
+                                        <input type="checkbox" id="aether-service-enabled" checked> 启用
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="form-actions">
+                                <button type="submit" class="btn btn-primary">💾 保存</button>
+                                <button type="button" class="btn btn-secondary" id="test-aether-service-btn">🔌 测试连接</button>
+                                <button type="button" class="btn btn-secondary" id="cancel-aether-service-btn">取消</button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             </div>

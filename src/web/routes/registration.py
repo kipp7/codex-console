@@ -16,6 +16,7 @@ from ...database import crud
 from ...database.session import get_db
 from ...database.models import RegistrationTask, Proxy
 from ...core.register import RegistrationEngine, RegistrationResult
+from ...proxy_utils import normalize_proxy_url
 from ...services import EmailServiceFactory, EmailServiceType
 from ...config.settings import get_settings
 from ..task_manager import task_manager
@@ -71,6 +72,8 @@ class RegistrationTaskCreate(BaseModel):
     proxy: Optional[str] = None
     email_service_config: Optional[dict] = None
     email_service_id: Optional[int] = None
+    auto_upload_aether: bool = False
+    aether_service_ids: List[int] = []  # 指定 Aether 服务 ID 列表，空则取第一个启用的
     auto_upload_cpa: bool = False
     cpa_service_ids: List[int] = []  # 指定 CPA 服务 ID 列表，空则取第一个启用的
     auto_upload_sub2api: bool = False
@@ -90,6 +93,8 @@ class BatchRegistrationRequest(BaseModel):
     interval_max: int = 30
     concurrency: int = 1
     mode: str = "pipeline"
+    auto_upload_aether: bool = False
+    aether_service_ids: List[int] = []
     auto_upload_cpa: bool = False
     cpa_service_ids: List[int] = []
     auto_upload_sub2api: bool = False
@@ -158,6 +163,8 @@ class OutlookBatchRegistrationRequest(BaseModel):
     interval_max: int = 30
     concurrency: int = 1
     mode: str = "pipeline"
+    auto_upload_aether: bool = False
+    aether_service_ids: List[int] = []
     auto_upload_cpa: bool = False
     cpa_service_ids: List[int] = []
     auto_upload_sub2api: bool = False
@@ -221,7 +228,7 @@ def _normalize_email_service_config(
     return normalized
 
 
-def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None, log_prefix: str = "", batch_id: str = "", auto_upload_cpa: bool = False, cpa_service_ids: List[int] = None, auto_upload_sub2api: bool = False, sub2api_service_ids: List[int] = None, auto_upload_tm: bool = False, tm_service_ids: List[int] = None):
+def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None, log_prefix: str = "", batch_id: str = "", auto_upload_aether: bool = False, aether_service_ids: List[int] = None, auto_upload_cpa: bool = False, cpa_service_ids: List[int] = None, auto_upload_sub2api: bool = False, sub2api_service_ids: List[int] = None, auto_upload_tm: bool = False, tm_service_ids: List[int] = None):
     """
     在线程池中执行的同步注册任务
 
@@ -251,13 +258,15 @@ def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: 
             # 确定使用的代理
             # 如果前端传入了代理参数，使用传入的
             # 否则从代理列表或系统设置中获取
-            actual_proxy_url = proxy
+            actual_proxy_url = normalize_proxy_url(proxy)
             proxy_id = None
 
             if not actual_proxy_url:
                 actual_proxy_url, proxy_id = get_proxy_for_registration(db)
                 if actual_proxy_url:
                     logger.info(f"任务 {task_uuid} 使用代理: {actual_proxy_url[:50]}...")
+                else:
+                    logger.warning(f"任务 {task_uuid} 未获取到代理，将直连执行")
 
             # 更新任务的代理记录
             crud.update_registration_task(db, task_uuid, proxy=actual_proxy_url)
@@ -411,6 +420,48 @@ def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: 
                 # 保存到数据库
                 engine.save_to_database(result)
 
+                # 自动上传到 Aether（可多服务）
+                if auto_upload_aether:
+                    try:
+                        from ...core.upload.aether_upload import upload_to_aether
+                        from ...database.models import Account as AccountModel
+                        saved_account = db.query(AccountModel).filter_by(email=result.email).first()
+                        if saved_account:
+                            _aether_ids = aether_service_ids or []
+                            if not _aether_ids:
+                                _aether_ids = [s.id for s in crud.get_aether_services(db, enabled=True)]
+                            if not _aether_ids:
+                                log_callback("[Aether] 无可用 Aether 服务，跳过上传")
+                            for _sid in _aether_ids:
+                                try:
+                                    _svc = crud.get_aether_service_by_id(db, _sid)
+                                    if not _svc:
+                                        continue
+                                    log_callback(f"[Aether] 正在把账号发往服务站: {_svc.name}")
+                                    _ok, _msg = upload_to_aether(
+                                        saved_account,
+                                        api_url=_svc.api_url,
+                                        api_token=_svc.api_token,
+                                        provider_id=_svc.provider_id,
+                                        device_id=_svc.device_id,
+                                        admin_email=_svc.admin_email,
+                                        admin_password=_svc.admin_password,
+                                        api_formats=_svc.api_formats,
+                                        auth_type=_svc.auth_type,
+                                        extra_payload=_svc.extra_payload,
+                                    )
+                                    if _ok:
+                                        saved_account.aether_uploaded = True
+                                        saved_account.aether_uploaded_at = datetime.utcnow()
+                                        db.commit()
+                                        log_callback(f"[Aether] 投递成功，服务站已签收: {_svc.name}")
+                                    else:
+                                        log_callback(f"[Aether] 上传失败({_svc.name}): {_msg}")
+                                except Exception as _e:
+                                    log_callback(f"[Aether] 异常({_sid}): {_e}")
+                    except Exception as aether_err:
+                        log_callback(f"[Aether] 上传异常: {aether_err}")
+
                 # 自动上传到 CPA（可多服务）
                 if auto_upload_cpa:
                     try:
@@ -538,7 +589,7 @@ def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: 
                 pass
 
 
-async def run_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None, log_prefix: str = "", batch_id: str = "", auto_upload_cpa: bool = False, cpa_service_ids: List[int] = None, auto_upload_sub2api: bool = False, sub2api_service_ids: List[int] = None, auto_upload_tm: bool = False, tm_service_ids: List[int] = None):
+async def run_registration_task(task_uuid: str, email_service_type: str, proxy: Optional[str], email_service_config: Optional[dict], email_service_id: Optional[int] = None, log_prefix: str = "", batch_id: str = "", auto_upload_aether: bool = False, aether_service_ids: List[int] = None, auto_upload_cpa: bool = False, cpa_service_ids: List[int] = None, auto_upload_sub2api: bool = False, sub2api_service_ids: List[int] = None, auto_upload_tm: bool = False, tm_service_ids: List[int] = None):
     """
     异步执行注册任务
 
@@ -565,6 +616,8 @@ async def run_registration_task(task_uuid: str, email_service_type: str, proxy: 
             email_service_id,
             log_prefix,
             batch_id,
+            auto_upload_aether,
+            aether_service_ids or [],
             auto_upload_cpa,
             cpa_service_ids or [],
             auto_upload_sub2api,
@@ -619,6 +672,8 @@ async def run_batch_parallel(
     email_service_config: Optional[dict],
     email_service_id: Optional[int],
     concurrency: int,
+    auto_upload_aether: bool = False,
+    aether_service_ids: List[int] = None,
     auto_upload_cpa: bool = False,
     cpa_service_ids: List[int] = None,
     auto_upload_sub2api: bool = False,
@@ -641,6 +696,7 @@ async def run_batch_parallel(
             await run_registration_task(
                 uuid, email_service_type, proxy, email_service_config, email_service_id,
                 log_prefix=prefix, batch_id=batch_id,
+                auto_upload_aether=auto_upload_aether, aether_service_ids=aether_service_ids or [],
                 auto_upload_cpa=auto_upload_cpa, cpa_service_ids=cpa_service_ids or [],
                 auto_upload_sub2api=auto_upload_sub2api, sub2api_service_ids=sub2api_service_ids or [],
                 auto_upload_tm=auto_upload_tm, tm_service_ids=tm_service_ids or [],
@@ -710,6 +766,8 @@ async def run_batch_pipeline(
     interval_min: int,
     interval_max: int,
     concurrency: int,
+    auto_upload_aether: bool = False,
+    aether_service_ids: List[int] = None,
     auto_upload_cpa: bool = False,
     cpa_service_ids: List[int] = None,
     auto_upload_sub2api: bool = False,
@@ -732,6 +790,7 @@ async def run_batch_pipeline(
             await run_registration_task(
                 uuid, email_service_type, proxy, email_service_config, email_service_id,
                 log_prefix=pfx, batch_id=batch_id,
+                auto_upload_aether=auto_upload_aether, aether_service_ids=aether_service_ids or [],
                 auto_upload_cpa=auto_upload_cpa, cpa_service_ids=cpa_service_ids or [],
                 auto_upload_sub2api=auto_upload_sub2api, sub2api_service_ids=sub2api_service_ids or [],
                 auto_upload_tm=auto_upload_tm, tm_service_ids=tm_service_ids or [],
@@ -824,6 +883,8 @@ async def run_batch_registration(
     interval_max: int,
     concurrency: int = 1,
     mode: str = "pipeline",
+    auto_upload_aether: bool = False,
+    aether_service_ids: List[int] = None,
     auto_upload_cpa: bool = False,
     cpa_service_ids: List[int] = None,
     auto_upload_sub2api: bool = False,
@@ -836,6 +897,7 @@ async def run_batch_registration(
         await run_batch_parallel(
             batch_id, task_uuids, email_service_type, proxy,
             email_service_config, email_service_id, concurrency,
+            auto_upload_aether=auto_upload_aether, aether_service_ids=aether_service_ids,
             auto_upload_cpa=auto_upload_cpa, cpa_service_ids=cpa_service_ids,
             auto_upload_sub2api=auto_upload_sub2api, sub2api_service_ids=sub2api_service_ids,
             auto_upload_tm=auto_upload_tm, tm_service_ids=tm_service_ids,
@@ -845,6 +907,7 @@ async def run_batch_registration(
             batch_id, task_uuids, email_service_type, proxy,
             email_service_config, email_service_id,
             interval_min, interval_max, concurrency,
+            auto_upload_aether=auto_upload_aether, aether_service_ids=aether_service_ids,
             auto_upload_cpa=auto_upload_cpa, cpa_service_ids=cpa_service_ids,
             auto_upload_sub2api=auto_upload_sub2api, sub2api_service_ids=sub2api_service_ids,
             auto_upload_tm=auto_upload_tm, tm_service_ids=tm_service_ids,
@@ -894,6 +957,8 @@ async def start_registration(
         request.email_service_id,
         "",
         "",
+        request.auto_upload_aether,
+        request.aether_service_ids,
         request.auto_upload_cpa,
         request.cpa_service_ids,
         request.auto_upload_sub2api,
@@ -971,6 +1036,8 @@ async def start_batch_registration(
         request.interval_max,
         request.concurrency,
         request.mode,
+        request.auto_upload_aether,
+        request.aether_service_ids,
         request.auto_upload_cpa,
         request.cpa_service_ids,
         request.auto_upload_sub2api,
@@ -1406,6 +1473,8 @@ async def run_outlook_batch_registration(
     interval_max: int,
     concurrency: int = 1,
     mode: str = "pipeline",
+    auto_upload_aether: bool = False,
+    aether_service_ids: List[int] = None,
     auto_upload_cpa: bool = False,
     cpa_service_ids: List[int] = None,
     auto_upload_sub2api: bool = False,
@@ -1449,6 +1518,8 @@ async def run_outlook_batch_registration(
         interval_max=interval_max,
         concurrency=concurrency,
         mode=mode,
+        auto_upload_aether=auto_upload_aether,
+        aether_service_ids=aether_service_ids,
         auto_upload_cpa=auto_upload_cpa,
         cpa_service_ids=cpa_service_ids,
         auto_upload_sub2api=auto_upload_sub2api,
@@ -1553,6 +1624,8 @@ async def start_outlook_batch_registration(
         request.interval_max,
         request.concurrency,
         request.mode,
+        request.auto_upload_aether,
+        request.aether_service_ids,
         request.auto_upload_cpa,
         request.cpa_service_ids,
         request.auto_upload_sub2api,

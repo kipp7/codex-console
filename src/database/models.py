@@ -10,6 +10,8 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.orm import relationship
 
+from ..proxy_utils import normalize_proxy_url
+
 Base = declarative_base()
 
 
@@ -52,6 +54,8 @@ class Account(Base):
     extra_data = Column(JSONEncodedDict)  # 额外信息存储
     cpa_uploaded = Column(Boolean, default=False)  # 是否已上传到 CPA
     cpa_uploaded_at = Column(DateTime)  # 上传时间
+    aether_uploaded = Column(Boolean, default=False)  # 是否已上传到 Aether
+    aether_uploaded_at = Column(DateTime)  # Aether 上传时间
     source = Column(String(20), default='register')  # 'register' 或 'login'，区分账号来源
     subscription_type = Column(String(20))  # None / 'plus' / 'team'
     subscription_at = Column(DateTime)  # 订阅开通时间
@@ -76,6 +80,8 @@ class Account(Base):
             'proxy_used': self.proxy_used,
             'cpa_uploaded': self.cpa_uploaded,
             'cpa_uploaded_at': self.cpa_uploaded_at.isoformat() if self.cpa_uploaded_at else None,
+            'aether_uploaded': self.aether_uploaded,
+            'aether_uploaded_at': self.aether_uploaded_at.isoformat() if self.aether_uploaded_at else None,
             'source': self.source,
             'subscription_type': self.subscription_type,
             'subscription_at': self.subscription_at.isoformat() if self.subscription_at else None,
@@ -140,6 +146,27 @@ class CpaService(Base):
     api_token = Column(Text, nullable=False)  # API Token
     enabled = Column(Boolean, default=True)
     priority = Column(Integer, default=0)  # 优先级
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AetherService(Base):
+    """Aether 服务配置表"""
+    __tablename__ = 'aether_services'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False)
+    api_url = Column(String(500), nullable=False)  # Aether 站点根地址或 admin/pool 地址
+    api_token = Column(Text)  # 管理员 Bearer Token
+    device_id = Column(String(100))  # 与管理员会话绑定的设备标识
+    admin_email = Column(String(255))  # 管理员邮箱
+    admin_password = Column(Text)  # 管理员密码
+    provider_id = Column(String(100), nullable=False)  # Aether Provider ID
+    api_formats = Column(String(255), default="openai:cli")  # 逗号分隔
+    auth_type = Column(String(50), default="oauth")  # oauth / api_key / service_account
+    extra_payload = Column(Text)  # 额外 JSON 负载
+    enabled = Column(Boolean, default=True)
+    priority = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -226,4 +253,4 @@ class Proxy(Base):
         if self.username and self.password:
             auth = f"{self.username}:{self.password}@"
 
-        return f"{scheme}://{auth}{self.host}:{self.port}"
+        return normalize_proxy_url(f"{scheme}://{auth}{self.host}:{self.port}")

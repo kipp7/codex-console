@@ -869,8 +869,12 @@ class RegistrationEngine:
             self._log("1. 先看看这条网络从哪儿来，别一开局就站错片场...")
             ip_ok, location = self._check_ip_location()
             if not ip_ok:
-                result.error_message = f"IP 地理位置不支持: {location}"
-                self._log(f"IP 检查失败: {location}", "error")
+                if location:
+                    result.error_message = f"IP 地理位置不支持: {location}"
+                    self._log(f"IP 检查失败: {location}", "error")
+                else:
+                    result.error_message = "IP 地理位置检查失败，请检查代理配置"
+                    self._log("IP 检查失败: 未能获取地理位置，请检查代理配置", "error")
                 return result
 
             self._log(f"IP 位置: {location}")

@@ -1,8 +1,21 @@
-# 使用官方 Python 基础镜像 (使用 slim 版本减小体积)
-FROM python:3.11-slim
+# 使用可访问的 Python 镜像源，避免 Docker Hub 直连失败。
+# 如需切换，可在构建时覆盖 PYTHON_BASE_IMAGE。
+ARG PYTHON_BASE_IMAGE=docker.m.daocloud.io/library/python:3.11-slim
+FROM ${PYTHON_BASE_IMAGE}
 
 # 设置工作目录
 WORKDIR /app
+
+# 修正容器内代理地址。Windows 主机上的 127.0.0.1 在 Linux 容器内不可达。
+ARG HTTP_PROXY=http://host.docker.internal:7897
+ARG HTTPS_PROXY=http://host.docker.internal:7897
+ARG NO_PROXY=localhost,127.0.0.1
+ENV HTTP_PROXY=${HTTP_PROXY} \
+    HTTPS_PROXY=${HTTPS_PROXY} \
+    http_proxy=${HTTP_PROXY} \
+    https_proxy=${HTTPS_PROXY} \
+    NO_PROXY=${NO_PROXY} \
+    no_proxy=${NO_PROXY}
 
 # 设置环境变量
 ENV PYTHONDONTWRITEBYTECODE=1 \

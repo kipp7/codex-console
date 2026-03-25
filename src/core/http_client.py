@@ -14,6 +14,7 @@ from curl_cffi.requests import Session, Response
 
 from ..config.constants import ERROR_MESSAGES
 from ..config.settings import get_settings
+from ..proxy_utils import normalize_proxy_url
 from .openai.sentinel import SentinelPOWError, build_sentinel_pow_token
 
 
@@ -56,7 +57,7 @@ class HTTPClient:
             config: 请求配置
             session: 可重用的会话对象
         """
-        self.proxy_url = proxy_url
+        self.proxy_url = normalize_proxy_url(proxy_url)
         self.config = config or RequestConfig()
         self._session = session
 
@@ -277,10 +278,22 @@ class OpenAIHTTPClient(HTTPClient):
             response = self.get("https://cloudflare.com/cdn-cgi/trace", timeout=10)
             trace_text = response.text
 
+            logger.info(
+                "IP 检测响应: status=%s, proxy=%s",
+                response.status_code,
+                self.proxy_url or "<none>",
+            )
+
             # 解析位置信息
             import re
             loc_match = re.search(r"loc=([A-Z]+)", trace_text)
             loc = loc_match.group(1) if loc_match else None
+
+            if not loc:
+                logger.warning(
+                    "IP 检测未解析到 loc，响应片段: %s",
+                    trace_text[:200].replace("\n", " ")
+                )
 
             # 检查是否支持
             if loc in ["CN", "HK", "MO", "TW"]:

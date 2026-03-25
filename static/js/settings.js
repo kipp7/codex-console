@@ -39,6 +39,18 @@ const elements = {
     // 动态代理设置
     dynamicProxyForm: document.getElementById('dynamic-proxy-form'),
     testDynamicProxyBtn: document.getElementById('test-dynamic-proxy-btn'),
+    // Aether 服务管理
+    addAetherServiceBtn: document.getElementById('add-aether-service-btn'),
+    aetherServicesTable: document.getElementById('aether-services-table'),
+    aetherServiceEditModal: document.getElementById('aether-service-edit-modal'),
+    closeAetherServiceModal: document.getElementById('close-aether-service-modal'),
+    cancelAetherServiceBtn: document.getElementById('cancel-aether-service-btn'),
+    aetherServiceForm: document.getElementById('aether-service-form'),
+    aetherServiceModalTitle: document.getElementById('aether-service-modal-title'),
+    testAetherServiceBtn: document.getElementById('test-aether-service-btn'),
+    fetchAetherProvidersBtn: document.getElementById('fetch-aether-providers-btn'),
+    aetherProviderSelect: document.getElementById('aether-provider-select'),
+    loginAetherBtn: document.getElementById('login-aether-btn'),
     // CPA 服务管理
     addCpaServiceBtn: document.getElementById('add-cpa-service-btn'),
     cpaServicesTable: document.getElementById('cpa-services-table'),
@@ -84,6 +96,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadEmailServices();
     loadDatabaseInfo();
     loadProxies();
+    loadAetherServices();
     loadCpaServices();
     loadSub2ApiServices();
     loadTmServices();
@@ -232,6 +245,37 @@ function initEventListeners() {
     }
     if (elements.testDynamicProxyBtn) {
         elements.testDynamicProxyBtn.addEventListener('click', handleTestDynamicProxy);
+    }
+
+    // Aether 服务管理
+    if (elements.addAetherServiceBtn) {
+        elements.addAetherServiceBtn.addEventListener('click', () => openAetherServiceModal());
+    }
+    if (elements.closeAetherServiceModal) {
+        elements.closeAetherServiceModal.addEventListener('click', closeAetherServiceModal);
+    }
+    if (elements.cancelAetherServiceBtn) {
+        elements.cancelAetherServiceBtn.addEventListener('click', closeAetherServiceModal);
+    }
+    if (elements.aetherServiceEditModal) {
+        elements.aetherServiceEditModal.addEventListener('click', (e) => {
+            if (e.target === elements.aetherServiceEditModal) closeAetherServiceModal();
+        });
+    }
+    if (elements.aetherServiceForm) {
+        elements.aetherServiceForm.addEventListener('submit', handleSaveAetherService);
+    }
+    if (elements.testAetherServiceBtn) {
+        elements.testAetherServiceBtn.addEventListener('click', handleTestAetherService);
+    }
+    if (elements.fetchAetherProvidersBtn) {
+        elements.fetchAetherProvidersBtn.addEventListener('click', handleFetchAetherProviders);
+    }
+    if (elements.aetherProviderSelect) {
+        elements.aetherProviderSelect.addEventListener('change', handleSelectAetherProvider);
+    }
+    if (elements.loginAetherBtn) {
+        elements.loginAetherBtn.addEventListener('click', handleLoginAether);
     }
 
     // 验证码设置
@@ -1052,6 +1096,300 @@ async function handleTestDynamicProxy() {
     } finally {
         btn.disabled = false;
         btn.textContent = '🔌 测试动态代理';
+    }
+}
+
+// ============== Team Manager 服务管理 ==============
+
+// ============== Aether 服务管理 ==============
+
+async function loadAetherServices() {
+    if (!elements.aetherServicesTable) return;
+    try {
+        const services = await api.get('/aether-services');
+        renderAetherServicesTable(services);
+    } catch (e) {
+        elements.aetherServicesTable.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger-color);">${e.message}</td></tr>`;
+    }
+}
+
+function renderAetherServicesTable(services) {
+    if (!services || services.length === 0) {
+        elements.aetherServicesTable.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px;">暂无 Aether 服务，点击「添加服务」新增</td></tr>';
+        return;
+    }
+    elements.aetherServicesTable.innerHTML = services.map(s => `
+        <tr>
+            <td>${escapeHtml(s.name)}</td>
+            <td style="font-size:0.85rem;color:var(--text-muted);">${escapeHtml(s.api_url)}</td>
+            <td style="font-size:0.85rem;font-family:var(--font-mono);">${escapeHtml(s.provider_id)}</td>
+            <td style="text-align:center;" title="${s.enabled ? '已启用' : '已禁用'}">${s.enabled ? '✅' : '⭕'}</td>
+            <td style="text-align:center;">${s.priority}</td>
+            <td style="white-space:nowrap;">
+                <button class="btn btn-secondary btn-sm" onclick="editAetherService(${s.id})">编辑</button>
+                <button class="btn btn-secondary btn-sm" onclick="testAetherServiceById(${s.id})">测试</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteAetherService(${s.id}, '${escapeHtml(s.name)}')">删除</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function openAetherServiceModal(service = null) {
+    document.getElementById('aether-service-id').value = service ? service.id : '';
+    document.getElementById('aether-service-device-id').value = service ? (service.device_id || '') : '';
+    document.getElementById('aether-service-name').value = service ? service.name : '';
+    document.getElementById('aether-service-url').value = service ? service.api_url : '';
+    document.getElementById('aether-service-token').value = '';
+    document.getElementById('aether-admin-email').value = service ? (service.admin_email || '') : '';
+    document.getElementById('aether-admin-password').value = '';
+    document.getElementById('aether-service-provider-id').value = service ? service.provider_id : '';
+    document.getElementById('aether-service-api-formats').value = service ? (service.api_formats || 'openai:cli') : 'openai:cli';
+    document.getElementById('aether-service-auth-type').value = service ? (service.auth_type || 'oauth') : 'oauth';
+    document.getElementById('aether-service-extra-payload').value = service ? (service.extra_payload || '') : '';
+    document.getElementById('aether-service-priority').value = service ? service.priority : 0;
+    document.getElementById('aether-service-enabled').checked = service ? service.enabled : true;
+    if (elements.aetherProviderSelect) {
+        elements.aetherProviderSelect.innerHTML = '<option value="">先获取后选择</option>';
+    }
+    elements.aetherServiceModalTitle.textContent = service ? '编辑 Aether 服务' : '添加 Aether 服务';
+    elements.aetherServiceEditModal.classList.add('active');
+}
+
+function closeAetherServiceModal() {
+    elements.aetherServiceEditModal.classList.remove('active');
+}
+
+async function editAetherService(id) {
+    try {
+        const service = await api.get(`/aether-services/${id}/full`);
+        openAetherServiceModal(service);
+    } catch (e) {
+        toast.error('获取服务信息失败: ' + e.message);
+    }
+}
+
+async function handleSaveAetherService(e) {
+    e.preventDefault();
+    const id = document.getElementById('aether-service-id').value;
+    const name = document.getElementById('aether-service-name').value.trim();
+    const apiUrl = document.getElementById('aether-service-url').value.trim();
+    const apiToken = document.getElementById('aether-service-token').value.trim();
+    const deviceId = document.getElementById('aether-service-device-id').value.trim();
+    const adminEmail = document.getElementById('aether-admin-email').value.trim();
+    const adminPassword = document.getElementById('aether-admin-password').value;
+    const providerId = document.getElementById('aether-service-provider-id').value.trim();
+    const apiFormats = document.getElementById('aether-service-api-formats').value.trim() || 'openai:cli';
+    const authType = document.getElementById('aether-service-auth-type').value;
+    const extraPayload = document.getElementById('aether-service-extra-payload').value.trim();
+    const priority = parseInt(document.getElementById('aether-service-priority').value) || 0;
+    const enabled = document.getElementById('aether-service-enabled').checked;
+
+    if (!name || !apiUrl || !providerId) {
+        toast.error('名称、站点地址和 Provider ID 不能为空');
+        return;
+    }
+    if (!id && !apiToken && !(adminEmail && adminPassword)) {
+        toast.error('新增服务时请提供管理员 Token，或填写管理员邮箱和密码');
+        return;
+    }
+    if (extraPayload) {
+        try {
+            JSON.parse(extraPayload);
+        } catch (err) {
+            toast.error('额外 Payload 不是合法 JSON');
+            return;
+        }
+    }
+
+    try {
+        const payload = { name, api_url: apiUrl, provider_id: providerId, api_formats: apiFormats, auth_type: authType, priority, enabled };
+        if (apiToken) payload.api_token = apiToken;
+        if (deviceId) payload.device_id = deviceId;
+        if (adminEmail) payload.admin_email = adminEmail;
+        if (adminPassword) payload.admin_password = adminPassword;
+        if (extraPayload) payload.extra_payload = extraPayload;
+
+        if (id) {
+            await api.patch(`/aether-services/${id}`, payload);
+            toast.success('服务已更新');
+        } else {
+            await api.post('/aether-services', payload);
+            toast.success('服务已添加');
+        }
+        closeAetherServiceModal();
+        loadAetherServices();
+    } catch (e) {
+        toast.error('保存失败: ' + e.message);
+    }
+}
+
+async function deleteAetherService(id, name) {
+    const confirmed = await confirm(`确定要删除 Aether 服务「${name}」吗？`);
+    if (!confirmed) return;
+    try {
+        await api.delete(`/aether-services/${id}`);
+        toast.success('已删除');
+        loadAetherServices();
+    } catch (e) {
+        toast.error('删除失败: ' + e.message);
+    }
+}
+
+async function testAetherServiceById(id) {
+    try {
+        const result = await api.post(`/aether-services/${id}/test`);
+        if (result.success) {
+            toast.success(result.message);
+        } else {
+            toast.error(result.message);
+        }
+    } catch (e) {
+        toast.error('测试失败: ' + e.message);
+    }
+}
+
+async function handleTestAetherService() {
+    const apiUrl = document.getElementById('aether-service-url').value.trim();
+    const apiToken = document.getElementById('aether-service-token').value.trim();
+    const deviceId = document.getElementById('aether-service-device-id').value.trim();
+    const providerId = document.getElementById('aether-service-provider-id').value.trim();
+    const id = document.getElementById('aether-service-id').value;
+
+    if (!apiUrl || !providerId) {
+        toast.error('请先填写站点地址和 Provider ID');
+        return;
+    }
+    if (!id && !apiToken) {
+        toast.error('请先填写管理员 Token');
+        return;
+    }
+
+    elements.testAetherServiceBtn.disabled = true;
+    elements.testAetherServiceBtn.textContent = '测试中...';
+
+    try {
+        let result;
+        if (id && !apiToken) {
+            result = await api.post(`/aether-services/${id}/test`);
+        } else {
+            result = await api.post('/aether-services/test-connection', {
+                api_url: apiUrl,
+                api_token: apiToken,
+                device_id: deviceId || null,
+                provider_id: providerId
+            });
+        }
+        if (result.success) {
+            toast.success(result.message);
+        } else {
+            toast.error(result.message);
+        }
+    } catch (e) {
+        toast.error('测试失败: ' + e.message);
+    } finally {
+        elements.testAetherServiceBtn.disabled = false;
+        elements.testAetherServiceBtn.textContent = '🔌 测试连接';
+    }
+}
+
+async function handleFetchAetherProviders() {
+    const apiUrl = document.getElementById('aether-service-url').value.trim();
+    const apiToken = document.getElementById('aether-service-token').value.trim();
+    const deviceId = document.getElementById('aether-service-device-id').value.trim();
+    const id = document.getElementById('aether-service-id').value;
+
+    if (!apiUrl) {
+        toast.error('请先填写站点地址');
+        return;
+    }
+    if (!id && !apiToken) {
+        toast.error('请先填写管理员 Token');
+        return;
+    }
+
+    elements.fetchAetherProvidersBtn.disabled = true;
+    elements.fetchAetherProvidersBtn.textContent = '获取中...';
+
+    try {
+        let tokenToUse = apiToken;
+        if (id && !tokenToUse) {
+            const service = await api.get(`/aether-services/${id}/full`);
+            tokenToUse = service.api_token;
+            document.getElementById('aether-service-device-id').value = service.device_id || '';
+        }
+
+        const result = await api.post('/aether-services/providers/fetch', {
+            api_url: apiUrl,
+            api_token: tokenToUse,
+            device_id: deviceId || document.getElementById('aether-service-device-id').value || null
+        });
+
+        if (!result.success) {
+            toast.error(result.message || '获取 Provider 失败');
+            return;
+        }
+
+        const providers = result.providers || [];
+        if (providers.length === 0) {
+            toast.warning('没有获取到可用的 Provider');
+            elements.aetherProviderSelect.innerHTML = '<option value="">未找到 Provider</option>';
+            return;
+        }
+
+        elements.aetherProviderSelect.innerHTML = `
+            <option value="">请选择 Provider</option>
+            ${providers.map(p => `
+                <option value="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}">
+                    ${escapeHtml(p.name)} (${escapeHtml(p.id)})${p.provider_type ? ` - ${escapeHtml(p.provider_type)}` : ''}
+                </option>
+            `).join('')}
+        `;
+        toast.success(`已获取 ${providers.length} 个 Provider`);
+    } catch (e) {
+        toast.error('获取 Provider 失败: ' + e.message);
+    } finally {
+        elements.fetchAetherProvidersBtn.disabled = false;
+        elements.fetchAetherProvidersBtn.textContent = '🔄 获取 Provider';
+    }
+}
+
+function handleSelectAetherProvider() {
+    const value = elements.aetherProviderSelect.value;
+    if (!value) return;
+    document.getElementById('aether-service-provider-id').value = value;
+}
+
+async function handleLoginAether() {
+    const apiUrl = document.getElementById('aether-service-url').value.trim();
+    const email = document.getElementById('aether-admin-email').value.trim();
+    const password = document.getElementById('aether-admin-password').value;
+
+    if (!apiUrl || !email || !password) {
+        toast.error('请先填写站点地址、管理员邮箱和密码');
+        return;
+    }
+
+    elements.loginAetherBtn.disabled = true;
+    elements.loginAetherBtn.textContent = '登录中...';
+
+    try {
+        const result = await api.post('/aether-services/auth/login', {
+            api_url: apiUrl,
+            email,
+            password
+        });
+        if (!result.success) {
+            toast.error(result.message || '登录失败');
+            return;
+        }
+        document.getElementById('aether-service-token').value = result.access_token || '';
+        document.getElementById('aether-service-device-id').value = result.device_id || '';
+        toast.success('已获取 access_token，请继续获取 Provider');
+    } catch (e) {
+        toast.error('登录失败: ' + e.message);
+    } finally {
+        elements.loginAetherBtn.disabled = false;
+        elements.loginAetherBtn.textContent = '🔐 登录获取 Token';
     }
 }
 

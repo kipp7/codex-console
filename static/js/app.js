@@ -86,6 +86,9 @@ const elements = {
     concurrencyHint: document.getElementById('concurrency-hint'),
     intervalGroup: document.getElementById('interval-group'),
     // 注册后自动操作
+    autoUploadAether: document.getElementById('auto-upload-aether'),
+    aetherServiceSelectGroup: document.getElementById('aether-service-select-group'),
+    aetherServiceSelect: document.getElementById('aether-service-select'),
     autoUploadCpa: document.getElementById('auto-upload-cpa'),
     cpaServiceSelectGroup: document.getElementById('cpa-service-select-group'),
     cpaServiceSelect: document.getElementById('cpa-service-select'),
@@ -108,9 +111,10 @@ document.addEventListener('DOMContentLoaded', () => {
     initAutoUploadOptions();
 });
 
-// 初始化注册后自动操作选项（CPA / Sub2API / TM）
+// 初始化注册后自动操作选项（Aether / CPA / Sub2API / TM）
 async function initAutoUploadOptions() {
     await Promise.all([
+        loadServiceSelect('/aether-services?enabled=true', elements.aetherServiceSelect, elements.autoUploadAether, elements.aetherServiceSelectGroup),
         loadServiceSelect('/cpa-services?enabled=true', elements.cpaServiceSelect, elements.autoUploadCpa, elements.cpaServiceSelectGroup),
         loadServiceSelect('/sub2api-services?enabled=true', elements.sub2apiServiceSelect, elements.autoUploadSub2api, elements.sub2apiServiceSelectGroup),
         loadServiceSelect('/tm-services?enabled=true', elements.tmServiceSelect, elements.autoUploadTm, elements.tmServiceSelectGroup),
@@ -497,6 +501,8 @@ async function handleStartRegistration(e) {
     // 构建请求数据（代理从设置中自动获取）
     const requestData = {
         email_service_type: emailServiceType,
+        auto_upload_aether: elements.autoUploadAether ? elements.autoUploadAether.checked : false,
+        aether_service_ids: elements.autoUploadAether && elements.autoUploadAether.checked ? getSelectedServiceIds(elements.aetherServiceSelect) : [],
         auto_upload_cpa: elements.autoUploadCpa ? elements.autoUploadCpa.checked : false,
         cpa_service_ids: elements.autoUploadCpa && elements.autoUploadCpa.checked ? getSelectedServiceIds(elements.cpaServiceSelect) : [],
         auto_upload_sub2api: elements.autoUploadSub2api ? elements.autoUploadSub2api.checked : false,
@@ -1208,6 +1214,8 @@ async function handleOutlookBatchRegistration() {
         interval_max: intervalMax,
         concurrency: Math.min(50, Math.max(1, concurrency)),
         mode: mode,
+        auto_upload_aether: elements.autoUploadAether ? elements.autoUploadAether.checked : false,
+        aether_service_ids: elements.autoUploadAether && elements.autoUploadAether.checked ? getSelectedServiceIds(elements.aetherServiceSelect) : [],
         auto_upload_cpa: elements.autoUploadCpa ? elements.autoUploadCpa.checked : false,
         cpa_service_ids: elements.autoUploadCpa && elements.autoUploadCpa.checked ? getSelectedServiceIds(elements.cpaServiceSelect) : [],
         auto_upload_sub2api: elements.autoUploadSub2api ? elements.autoUploadSub2api.checked : false,

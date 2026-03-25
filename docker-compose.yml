@@ -1,11 +1,20 @@
-version: '3.8'
-
 services:
   webui:
-    build: .
+    build:
+      context: .
+      args:
+        HTTP_PROXY: http://host.docker.internal:7897
+        HTTPS_PROXY: http://host.docker.internal:7897
+        NO_PROXY: localhost,127.0.0.1
     ports:
       - "1455:1455"
     environment:
+      - HTTP_PROXY=http://host.docker.internal:7897
+      - HTTPS_PROXY=http://host.docker.internal:7897
+      - http_proxy=http://host.docker.internal:7897
+      - https_proxy=http://host.docker.internal:7897
+      - NO_PROXY=localhost,127.0.0.1,host.docker.internal
+      - no_proxy=localhost,127.0.0.1,host.docker.internal
       - WEBUI_HOST=0.0.0.0
       - WEBUI_PORT=1455
       - DEBUG=0

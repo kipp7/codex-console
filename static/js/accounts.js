@@ -103,6 +103,7 @@ function initEventListeners() {
         uploadMenu.classList.toggle('active');
     });
     document.getElementById('batch-upload-cpa-item').addEventListener('click', (e) => { e.preventDefault(); uploadMenu.classList.remove('active'); handleBatchUploadCpa(); });
+    document.getElementById('batch-upload-aether-item').addEventListener('click', (e) => { e.preventDefault(); uploadMenu.classList.remove('active'); handleBatchUploadAether(); });
     document.getElementById('batch-upload-sub2api-item').addEventListener('click', (e) => { e.preventDefault(); uploadMenu.classList.remove('active'); handleBatchUploadSub2Api(); });
     document.getElementById('batch-upload-tm-item').addEventListener('click', (e) => { e.preventDefault(); uploadMenu.classList.remove('active'); handleBatchUploadTm(); });
 
@@ -210,7 +211,7 @@ async function loadAccounts() {
     // 显示加载状态
     elements.table.innerHTML = `
         <tr>
-            <td colspan="9">
+            <td colspan="11">
                 <div class="empty-state">
                     <div class="skeleton skeleton-text" style="width: 60%;"></div>
                     <div class="skeleton skeleton-text" style="width: 80%;"></div>
@@ -251,7 +252,7 @@ async function loadAccounts() {
         console.error('加载账号列表失败:', error);
         elements.table.innerHTML = `
             <tr>
-                <td colspan="9">
+                <td colspan="11">
                     <div class="empty-state">
                         <div class="empty-state-icon">❌</div>
                         <div class="empty-state-title">加载失败</div>
@@ -270,7 +271,7 @@ function renderAccounts(accounts) {
     if (accounts.length === 0) {
         elements.table.innerHTML = `
             <tr>
-                <td colspan="9">
+                <td colspan="11">
                     <div class="empty-state">
                         <div class="empty-state-icon">📭</div>
                         <div class="empty-state-title">暂无数据</div>
@@ -305,6 +306,13 @@ function renderAccounts(accounts) {
             </td>
             <td>${getServiceTypeText(account.email_service)}</td>
             <td>${getStatusIcon(account.status)}</td>
+            <td>
+                <div class="cpa-status">
+                    ${account.aether_uploaded
+                        ? `<span class="badge uploaded" title="已上传于 ${format.date(account.aether_uploaded_at)}">✓</span>`
+                        : `<span class="badge pending">-</span>`}
+                </div>
+            </td>
             <td>
                 <div class="cpa-status">
                     ${account.cpa_uploaded
@@ -821,6 +829,7 @@ function selectCpaService() {
 // 统一上传入口：弹出目标选择
 async function uploadAccount(id) {
     const targets = [
+        { label: '🪐 上传到 Aether', value: 'aether' },
         { label: '☁️ 上传到 CPA', value: 'cpa' },
         { label: '🔗 上传到 Sub2API', value: 'sub2api' },
         { label: '🚀 上传到 Team Manager', value: 'tm' },
@@ -850,9 +859,129 @@ async function uploadAccount(id) {
     });
 
     if (!choice) return;
+    if (choice === 'aether') return uploadToAether(id);
     if (choice === 'cpa') return uploadToCpa(id);
     if (choice === 'sub2api') return uploadToSub2Api(id);
     if (choice === 'tm') return uploadToTm(id);
+}
+
+// ============== Aether 上传 ==============
+
+function selectAetherService() {
+    return new Promise(async (resolve) => {
+        const modal = document.getElementById('aether-service-modal');
+        const listEl = document.getElementById('aether-service-list');
+        const closeBtn = document.getElementById('close-aether-modal');
+        const cancelBtn = document.getElementById('cancel-aether-modal-btn');
+        const autoBtn = document.getElementById('aether-use-auto-btn');
+
+        listEl.innerHTML = '<div style="text-align:center;color:var(--text-muted)">加载中...</div>';
+        modal.classList.add('active');
+
+        let services = [];
+        try {
+            services = await api.get('/aether-services?enabled=true');
+        } catch (e) {
+            services = [];
+        }
+
+        if (services.length === 0) {
+            listEl.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:12px;">暂无已启用的 Aether 服务，将自动选择第一个</div>';
+        } else {
+            listEl.innerHTML = services.map(s => `
+                <div class="aether-service-item" data-id="${s.id}" style="
+                    padding: 10px 14px;
+                    border: 1px solid var(--border);
+                    border-radius: 8px;
+                    cursor: pointer;
+                    transition: background 0.15s;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                ">
+                    <div>
+                        <div style="font-weight:500;">${escapeHtml(s.name)}</div>
+                        <div style="font-size:0.8rem;color:var(--text-muted);">${escapeHtml(s.api_url)}</div>
+                        <div style="font-size:0.75rem;color:var(--text-muted);">Provider: ${escapeHtml(s.provider_id)}</div>
+                    </div>
+                    <span class="badge" style="background:var(--primary);color:#fff;font-size:0.7rem;padding:2px 8px;border-radius:10px;">选择</span>
+                </div>
+            `).join('');
+
+            listEl.querySelectorAll('.aether-service-item').forEach(item => {
+                item.addEventListener('mouseenter', () => item.style.background = 'var(--surface-hover)');
+                item.addEventListener('mouseleave', () => item.style.background = '');
+                item.addEventListener('click', () => {
+                    cleanup();
+                    resolve({ aether_service_id: parseInt(item.dataset.id) });
+                });
+            });
+        }
+
+        function cleanup() {
+            modal.classList.remove('active');
+            closeBtn.removeEventListener('click', onCancel);
+            cancelBtn.removeEventListener('click', onCancel);
+            autoBtn.removeEventListener('click', onAuto);
+        }
+        function onCancel() { cleanup(); resolve(null); }
+        function onAuto() { cleanup(); resolve({ aether_service_id: null }); }
+
+        closeBtn.addEventListener('click', onCancel);
+        cancelBtn.addEventListener('click', onCancel);
+        autoBtn.addEventListener('click', onAuto);
+    });
+}
+
+async function uploadToAether(id) {
+    const choice = await selectAetherService();
+    if (choice === null) return;
+
+    try {
+        toast.info('正在上传到 Aether...');
+        const payload = {};
+        if (choice.aether_service_id != null) payload.aether_service_id = choice.aether_service_id;
+        const result = await api.post(`/accounts/${id}/upload-aether`, payload);
+        if (result.success) {
+            toast.success('上传成功');
+            loadAccounts();
+        } else {
+            toast.error('上传失败: ' + (result.error || '未知错误'));
+        }
+    } catch (error) {
+        toast.error('上传失败: ' + error.message);
+    }
+}
+
+async function handleBatchUploadAether() {
+    const count = getEffectiveCount();
+    if (count === 0) return;
+
+    const choice = await selectAetherService();
+    if (choice === null) return;
+
+    const confirmed = await confirm(`确定要将选中的 ${count} 个账号上传到 Aether 吗？`);
+    if (!confirmed) return;
+
+    elements.batchUploadBtn.disabled = true;
+    elements.batchUploadBtn.textContent = '上传中...';
+
+    try {
+        const payload = buildBatchPayload();
+        if (choice.aether_service_id != null) payload.aether_service_id = choice.aether_service_id;
+        const result = await api.post('/accounts/batch-upload-aether', payload);
+
+        let message = `成功: ${result.success_count}`;
+        if (result.failed_count > 0) message += `, 失败: ${result.failed_count}`;
+        if (result.skipped_count > 0) message += `, 跳过: ${result.skipped_count}`;
+
+        toast.success(message);
+        loadAccounts();
+    } catch (error) {
+        toast.error('批量上传失败: ' + error.message);
+    } finally {
+        updateBatchButtons();
+    }
 }
 
 // 上传单个账号到CPA

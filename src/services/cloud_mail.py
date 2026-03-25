@@ -4,6 +4,7 @@ Cloud Mail 邮箱服务实现
 """
 
 import re
+import sys
 import time
 import logging
 import random
@@ -168,6 +169,7 @@ class CloudMailService(BaseEmailService):
         method: str,
         path: str,
         retry_on_auth_error: bool = True,
+        _retry_on_token_message: bool = True,
         **kwargs
     ) -> Any:
         """
@@ -202,11 +204,27 @@ class CloudMailService(BaseEmailService):
 
                 if response.status_code >= 400:
                     error_msg = f"请求失败: {response.status_code}"
+                    error_data = None
                     try:
                         error_data = response.json()
                         error_msg = f"{error_msg} - {error_data}"
                     except Exception:
                         error_msg = f"{error_msg} - {response.text[:200]}"
+
+                    # 业务层 token 验证失败时，强制刷新 token 重试一次
+                    if _retry_on_token_message and error_data:
+                        message = str(error_data.get("message") or "")
+                        if "token" in message and "验证失败" in message:
+                            logger.warning("Cloud Mail token 验证失败，尝试刷新 token 并重试")
+                            kwargs["headers"].update(self._get_headers(self._get_token(force_refresh=True)))
+                            return self._make_request(
+                                method,
+                                path,
+                                retry_on_auth_error=retry_on_auth_error,
+                                _retry_on_token_message=False,
+                                **kwargs,
+                            )
+
                     self.update_status(False, EmailServiceError(error_msg))
                     raise EmailServiceError(error_msg)
 

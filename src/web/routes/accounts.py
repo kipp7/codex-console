@@ -16,6 +16,7 @@ from ...config.constants import AccountStatus
 from ...config.settings import get_settings
 from ...core.openai.token_refresh import refresh_account_token as do_refresh
 from ...core.openai.token_refresh import validate_account_token as do_validate
+from ...core.upload.aether_upload import batch_upload_to_aether, upload_to_aether
 from ...core.upload.cpa_upload import generate_token_json, batch_upload_to_cpa, upload_to_cpa
 from ...core.upload.team_manager_upload import upload_to_team_manager, batch_upload_to_team_manager
 from ...core.upload.sub2api_upload import batch_upload_to_sub2api, upload_to_sub2api
@@ -61,6 +62,8 @@ class AccountResponse(BaseModel):
     proxy_used: Optional[str] = None
     cpa_uploaded: bool = False
     cpa_uploaded_at: Optional[str] = None
+    aether_uploaded: bool = False
+    aether_uploaded_at: Optional[str] = None
     cookies: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -140,6 +143,8 @@ def account_to_response(account: Account) -> AccountResponse:
         proxy_used=account.proxy_used,
         cpa_uploaded=account.cpa_uploaded or False,
         cpa_uploaded_at=account.cpa_uploaded_at.isoformat() if account.cpa_uploaded_at else None,
+        aether_uploaded=account.aether_uploaded or False,
+        aether_uploaded_at=account.aether_uploaded_at.isoformat() if account.aether_uploaded_at else None,
         cookies=account.cookies,
         created_at=account.created_at.isoformat() if account.created_at else None,
         updated_at=account.updated_at.isoformat() if account.updated_at else None,
@@ -709,6 +714,21 @@ class CPAUploadRequest(BaseModel):
     cpa_service_id: Optional[int] = None  # 指定 CPA 服务 ID，不传则使用全局配置
 
 
+class AetherUploadRequest(BaseModel):
+    """Aether 上传请求"""
+    aether_service_id: Optional[int] = None
+
+
+class BatchAetherUploadRequest(BaseModel):
+    """批量 Aether 上传请求"""
+    ids: List[int] = []
+    select_all: bool = False
+    status_filter: Optional[str] = None
+    email_service_filter: Optional[str] = None
+    search_filter: Optional[str] = None
+    aether_service_id: Optional[int] = None
+
+
 class BatchCPAUploadRequest(BaseModel):
     """批量 CPA 上传请求"""
     ids: List[int] = []
@@ -789,6 +809,83 @@ async def upload_account_to_cpa(account_id: int, request: Optional[CPAUploadRequ
             return {"success": True, "message": message}
         else:
             return {"success": False, "error": message}
+
+
+@router.post("/batch-upload-aether")
+async def batch_upload_accounts_to_aether(request: BatchAetherUploadRequest):
+    """批量上传账号到 Aether"""
+    service_id = request.aether_service_id
+
+    with get_db() as db:
+        if service_id:
+            svc = crud.get_aether_service_by_id(db, service_id)
+            if not svc:
+                raise HTTPException(status_code=404, detail="指定的 Aether 服务不存在")
+        else:
+            services = crud.get_aether_services(db, enabled=True)
+            svc = services[0] if services else None
+
+        if not svc:
+            raise HTTPException(status_code=400, detail="未找到可用的 Aether 服务，请先在设置中配置")
+
+        ids = resolve_account_ids(
+            db, request.ids, request.select_all,
+            request.status_filter, request.email_service_filter, request.search_filter
+        )
+
+    return batch_upload_to_aether(
+        ids,
+        api_url=svc.api_url,
+        api_token=svc.api_token,
+        provider_id=svc.provider_id,
+        device_id=svc.device_id,
+        admin_email=svc.admin_email,
+        admin_password=svc.admin_password,
+        api_formats=svc.api_formats,
+        auth_type=svc.auth_type,
+        extra_payload=svc.extra_payload,
+    )
+
+
+@router.post("/{account_id}/upload-aether")
+async def upload_account_to_aether(account_id: int, request: Optional[AetherUploadRequest] = Body(default=None)):
+    """上传单个账号到 Aether"""
+    service_id = request.aether_service_id if request else None
+
+    with get_db() as db:
+        if service_id:
+            svc = crud.get_aether_service_by_id(db, service_id)
+            if not svc:
+                raise HTTPException(status_code=404, detail="指定的 Aether 服务不存在")
+        else:
+            services = crud.get_aether_services(db, enabled=True)
+            svc = services[0] if services else None
+
+        if not svc:
+            raise HTTPException(status_code=400, detail="未找到可用的 Aether 服务，请先在设置中配置")
+
+        account = crud.get_account_by_id(db, account_id)
+        if not account:
+            raise HTTPException(status_code=404, detail="账号不存在")
+
+        success, message = upload_to_aether(
+            account,
+            api_url=svc.api_url,
+            api_token=svc.api_token,
+            provider_id=svc.provider_id,
+            device_id=svc.device_id,
+            admin_email=svc.admin_email,
+            admin_password=svc.admin_password,
+            api_formats=svc.api_formats,
+            auth_type=svc.auth_type,
+            extra_payload=svc.extra_payload,
+        )
+        if success:
+            account.aether_uploaded = True
+            account.aether_uploaded_at = datetime.utcnow()
+            db.commit()
+            return {"success": True, "message": message}
+        return {"success": False, "error": message}
 
 
 class Sub2ApiUploadRequest(BaseModel):

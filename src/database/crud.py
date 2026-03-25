@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc, asc, func
 
-from .models import Account, EmailService, RegistrationTask, Setting, Proxy, CpaService, Sub2ApiService
+from .models import Account, EmailService, RegistrationTask, Setting, Proxy, CpaService, AetherService, Sub2ApiService
 
 
 # ============================================================================
@@ -579,6 +579,89 @@ def update_cpa_service(
 def delete_cpa_service(db: Session, service_id: int) -> bool:
     """删除 CPA 服务配置"""
     db_service = get_cpa_service_by_id(db, service_id)
+    if not db_service:
+        return False
+    db.delete(db_service)
+    db.commit()
+    return True
+
+
+# ============================================================================
+# Aether 服务 CRUD
+# ============================================================================
+
+def create_aether_service(
+    db: Session,
+    name: str,
+    api_url: str,
+    api_token: Optional[str],
+    device_id: Optional[str],
+    admin_email: Optional[str],
+    admin_password: Optional[str],
+    provider_id: str,
+    api_formats: str = "openai:cli",
+    auth_type: str = "oauth",
+    extra_payload: Optional[str] = None,
+    enabled: bool = True,
+    priority: int = 0,
+) -> AetherService:
+    """创建 Aether 服务配置"""
+    db_service = AetherService(
+        name=name,
+        api_url=api_url,
+        api_token=api_token,
+        device_id=device_id,
+        admin_email=admin_email,
+        admin_password=admin_password,
+        provider_id=provider_id,
+        api_formats=api_formats,
+        auth_type=auth_type,
+        extra_payload=extra_payload,
+        enabled=enabled,
+        priority=priority,
+    )
+    db.add(db_service)
+    db.commit()
+    db.refresh(db_service)
+    return db_service
+
+
+def get_aether_service_by_id(db: Session, service_id: int) -> Optional[AetherService]:
+    """根据 ID 获取 Aether 服务"""
+    return db.query(AetherService).filter(AetherService.id == service_id).first()
+
+
+def get_aether_services(
+    db: Session,
+    enabled: Optional[bool] = None
+) -> List[AetherService]:
+    """获取 Aether 服务列表"""
+    query = db.query(AetherService)
+    if enabled is not None:
+        query = query.filter(AetherService.enabled == enabled)
+    return query.order_by(asc(AetherService.priority), asc(AetherService.id)).all()
+
+
+def update_aether_service(
+    db: Session,
+    service_id: int,
+    **kwargs
+) -> Optional[AetherService]:
+    """更新 Aether 服务配置"""
+    db_service = get_aether_service_by_id(db, service_id)
+    if not db_service:
+        return None
+    for key, value in kwargs.items():
+        if hasattr(db_service, key):
+            setattr(db_service, key, value)
+    db.commit()
+    db.refresh(db_service)
+    return db_service
+
+
+def delete_aether_service(db: Session, service_id: int) -> bool:
+    """删除 Aether 服务配置"""
+    db_service = get_aether_service_by_id(db, service_id)
     if not db_service:
         return False
     db.delete(db_service)

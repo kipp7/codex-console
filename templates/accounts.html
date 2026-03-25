@@ -133,6 +133,7 @@
                                 ☁️ 上传
                             </button>
                             <div class="dropdown-menu" id="upload-menu">
+                                <a href="#" class="dropdown-item" id="batch-upload-aether-item">🪐 上传到 Aether</a>
                                 <a href="#" class="dropdown-item" id="batch-upload-cpa-item">☁️ 上传到 CPA</a>
                                 <a href="#" class="dropdown-item" id="batch-upload-sub2api-item">🔗 上传到 Sub2API</a>
                                 <a href="#" class="dropdown-item" id="batch-upload-tm-item">🚀 上传到 Team Manager</a>
@@ -169,6 +170,7 @@
                                     <th style="width: 100px;">密码</th>
                                     <th style="width: 120px;">邮箱服务</th>
                                     <th style="width: 80px;">状态</th>
+                                    <th style="width: 80px;">Aether</th>
                                     <th style="width: 80px;">CPA</th>
                                     <th style="width: 80px;">订阅</th>
                                     <th style="width: 140px;">最后刷新</th>
@@ -213,6 +215,26 @@
             </div>
             <div class="modal-body" id="modal-body">
                 <!-- 动态加载 -->
+            </div>
+        </div>
+    </div>
+
+    <!-- CPA 服务选择模态框 -->
+    <div class="modal" id="aether-service-modal">
+        <div class="modal-content" style="max-width: 480px;">
+            <div class="modal-header">
+                <h3>🪐 选择 Aether 服务</h3>
+                <button class="modal-close" id="close-aether-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="color: var(--text-muted); margin-bottom: 12px; font-size: 0.9rem;">选择要上传到的 Aether 服务，或自动使用第一个启用的服务。</p>
+                <div id="aether-service-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto;">
+                    <div style="text-align: center; color: var(--text-muted);">加载中...</div>
+                </div>
+            </div>
+            <div class="modal-footer" style="padding: 12px 20px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end;">
+                <button class="btn btn-secondary" id="aether-use-auto-btn">自动选择</button>
+                <button class="btn btn-secondary" id="cancel-aether-modal-btn">取消</button>
             </div>
         </div>
     </div>

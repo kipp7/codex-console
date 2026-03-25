@@ -10,6 +10,8 @@ from pydantic import BaseModel, field_validator
 from pydantic.types import SecretStr
 from dataclasses import dataclass
 
+from ..proxy_utils import normalize_proxy_url
+
 
 class SettingCategory(str, Enum):
     """设置分类"""
@@ -521,8 +523,13 @@ def init_default_settings() -> None:
 def _load_settings_from_db() -> Dict[str, Any]:
     """从数据库加载所有设置"""
     try:
+        from ..database.session import init_database
         from ..database.session import get_db
         from ..database.crud import get_setting
+
+        # 某些模块会在应用启动早期调用 get_settings()。
+        # 这里主动初始化数据库，避免首轮读取退回默认值并被全局缓存。
+        init_database()
 
         settings_dict = {}
         with get_db() as db:
@@ -655,7 +662,7 @@ class Settings(BaseModel):
         if self.proxy_username and self.proxy_password:
             auth = f"{self.proxy_username}:{self.proxy_password.get_secret_value()}@"
 
-        return f"{scheme}://{auth}{self.proxy_host}:{self.proxy_port}"
+        return normalize_proxy_url(f"{scheme}://{auth}{self.proxy_host}:{self.proxy_port}")
 
     # 注册配置
     registration_max_retries: int = 3
