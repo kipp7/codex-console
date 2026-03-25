@@ -398,13 +398,15 @@ def _build_aether_payload(
     if auth_type == "oauth":
         if not account.refresh_token:
             raise ValueError("账号缺少 refresh_token，无法按 OAuth 方式上传到 Aether")
+        # Aether 会对现成 access_token/id_token 做校验。
+        # 为避免把本地已过期或不可解析的 token 一并写进去，这里只上传可用于重新换取 token 的 refresh_token。
         payload["refresh_token"] = account.refresh_token
-        if account.access_token:
-            payload["access_token"] = account.access_token
-        if account.expires_at:
-            payload["expires_at"] = account.expires_at.isoformat()
-        if account.id_token:
-            payload["id_token"] = account.id_token
+        payload["auth_config"] = {
+            "refresh_token": account.refresh_token,
+        }
+        if account.client_id:
+            payload["client_id"] = account.client_id
+            payload["auth_config"]["client_id"] = account.client_id
     elif auth_type == "api_key":
         if not account.access_token:
             raise ValueError("账号缺少 access_token，无法按 API Key 方式上传到 Aether")
@@ -447,7 +449,6 @@ def upload_to_aether(
         return False, "Aether Provider ID 未配置"
 
     base_url = _normalize_aether_base_url(api_url)
-    endpoint = f"{base_url}/api/admin/endpoints/providers/{provider_id}/keys"
     current_device_id = device_id or _generate_device_id()
 
     try:
@@ -463,23 +464,48 @@ def upload_to_aether(
         if not cleanup_ok:
             logger.warning("Aether 旧记录清理失败: %s", cleanup_msg)
 
-        payload = _build_aether_payload(
-            account,
-            auth_type=auth_type,
-            api_formats=api_formats,
-            extra_payload=extra_payload,
-        )
-        def _request(token: str, request_device_id: str):
-            response = cffi_requests.post(
-                endpoint,
-                headers=_build_headers(token, device_id=request_device_id),
-                json=payload,
-                timeout=30,
-                impersonate="chrome120",
+        normalized_auth_type = (auth_type or "oauth").strip().lower()
+
+        if normalized_auth_type == "oauth":
+            endpoint = f"{base_url}/api/admin/provider-oauth/providers/{provider_id}/import-refresh-token"
+            if not account.refresh_token:
+                return False, "账号缺少 refresh_token，无法按 OAuth 方式上传到 Aether"
+            payload = {
+                "name": account.email,
+                "refresh_token": account.refresh_token,
+            }
+
+            def _request(token: str, request_device_id: str):
+                response = cffi_requests.post(
+                    endpoint,
+                    headers=_build_headers(token, device_id=request_device_id),
+                    json=payload,
+                    timeout=30,
+                    impersonate="chrome120",
+                )
+                if response.status_code in (200, 201):
+                    return True, "上传成功"
+                return False, _extract_error(response)
+        else:
+            endpoint = f"{base_url}/api/admin/endpoints/providers/{provider_id}/keys"
+            payload = _build_aether_payload(
+                account,
+                auth_type=auth_type,
+                api_formats=api_formats,
+                extra_payload=extra_payload,
             )
-            if response.status_code in (200, 201):
-                return True, "上传成功"
-            return False, _extract_error(response)
+
+            def _request(token: str, request_device_id: str):
+                response = cffi_requests.post(
+                    endpoint,
+                    headers=_build_headers(token, device_id=request_device_id),
+                    json=payload,
+                    timeout=30,
+                    impersonate="chrome120",
+                )
+                if response.status_code in (200, 201):
+                    return True, "上传成功"
+                return False, _extract_error(response)
 
         ok, msg, _, _ = _request_with_reauth(
             api_url=api_url,
