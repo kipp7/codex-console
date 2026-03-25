@@ -75,6 +75,195 @@ def _extract_error(response) -> str:
     return f"HTTP {response.status_code}: {response.text[:200]}"
 
 
+def _request_with_reauth(
+    *,
+    api_url: str,
+    api_token: Optional[str],
+    device_id: Optional[str],
+    admin_email: Optional[str],
+    admin_password: Optional[str],
+    func,
+):
+    """
+    使用现有 token/device_id 发请求；若失效则自动重登后重试一次。
+    func(token, device_id) 应返回 (ok, payload)
+    """
+    current_token = api_token
+    current_device_id = device_id or _generate_device_id()
+
+    if current_token:
+        ok, payload = func(current_token, current_device_id)
+        if ok:
+            return True, payload, current_token, current_device_id
+        if not (admin_email and admin_password and _should_relogin(str(payload))):
+            return False, payload, current_token, current_device_id
+
+    if not (admin_email and admin_password):
+        return False, "Aether API Token 未配置", current_token, current_device_id
+
+    login_ok, login_data = login_aether_admin(
+        api_url=api_url,
+        email=admin_email,
+        password=admin_password,
+    )
+    if not login_ok:
+        return False, login_data, current_token, current_device_id
+
+    current_token = login_data.get("access_token")
+    current_device_id = login_data.get("device_id")
+    ok, payload = func(current_token, current_device_id)
+    return ok, payload, current_token, current_device_id
+
+
+def list_aether_keys(
+    *,
+    api_url: str,
+    api_token: Optional[str],
+    provider_id: str,
+    device_id: Optional[str] = None,
+    admin_email: Optional[str] = None,
+    admin_password: Optional[str] = None,
+) -> Tuple[bool, Any]:
+    """列出指定 Aether provider 下的 key。"""
+    if not api_url:
+        return False, "Aether API URL 不能为空"
+    if not provider_id:
+        return False, "Aether Provider ID 不能为空"
+
+    base_url = _normalize_aether_base_url(api_url)
+    endpoint = f"{base_url}/api/admin/endpoints/providers/{provider_id}/keys"
+
+    def _do_request(token: str, current_device_id: str):
+        response = cffi_requests.get(
+            endpoint,
+            headers=_build_headers(token, device_id=current_device_id),
+            params={"skip": 0, "limit": 500},
+            timeout=20,
+            impersonate="chrome120",
+        )
+        if response.status_code != 200:
+            return False, _extract_error(response)
+        data = response.json()
+        if isinstance(data, list):
+            return True, data
+        if isinstance(data, dict):
+            items = data.get("items")
+            if isinstance(items, list):
+                return True, items
+        return False, "Aether key 列表返回格式不支持"
+
+    try:
+        ok, payload, _, _ = _request_with_reauth(
+            api_url=api_url,
+            api_token=api_token,
+            device_id=device_id,
+            admin_email=admin_email,
+            admin_password=admin_password,
+            func=_do_request,
+        )
+        return ok, payload
+    except cffi_requests.exceptions.ConnectionError as exc:
+        return False, f"无法连接到 Aether 服务器: {exc}"
+    except cffi_requests.exceptions.Timeout:
+        return False, "获取 Aether key 列表超时"
+    except Exception as exc:
+        return False, f"获取 Aether key 列表失败: {exc}"
+
+
+def delete_aether_key(
+    *,
+    api_url: str,
+    api_token: Optional[str],
+    key_id: str,
+    device_id: Optional[str] = None,
+    admin_email: Optional[str] = None,
+    admin_password: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """删除指定 Aether key。"""
+    if not api_url:
+        return False, "Aether API URL 不能为空"
+    if not key_id:
+        return False, "Aether Key ID 不能为空"
+
+    base_url = _normalize_aether_base_url(api_url)
+    endpoint = f"{base_url}/api/admin/endpoints/keys/{key_id}"
+
+    def _do_request(token: str, current_device_id: str):
+        response = cffi_requests.delete(
+            endpoint,
+            headers=_build_headers(token, device_id=current_device_id),
+            timeout=20,
+            impersonate="chrome120",
+        )
+        if response.status_code in (200, 204):
+            return True, "删除成功"
+        return False, _extract_error(response)
+
+    try:
+        ok, payload, _, _ = _request_with_reauth(
+            api_url=api_url,
+            api_token=api_token,
+            device_id=device_id,
+            admin_email=admin_email,
+            admin_password=admin_password,
+            func=_do_request,
+        )
+        return ok, str(payload)
+    except cffi_requests.exceptions.ConnectionError as exc:
+        return False, f"无法连接到 Aether 服务器: {exc}"
+    except cffi_requests.exceptions.Timeout:
+        return False, "删除 Aether key 超时"
+    except Exception as exc:
+        return False, f"删除 Aether key 失败: {exc}"
+
+
+def cleanup_aether_keys_by_email(
+    *,
+    api_url: str,
+    api_token: Optional[str],
+    provider_id: str,
+    email: str,
+    device_id: Optional[str] = None,
+    admin_email: Optional[str] = None,
+    admin_password: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """删除同 provider 下与邮箱匹配的旧 key。"""
+    ok, payload = list_aether_keys(
+        api_url=api_url,
+        api_token=api_token,
+        provider_id=provider_id,
+        device_id=device_id,
+        admin_email=admin_email,
+        admin_password=admin_password,
+    )
+    if not ok:
+        return False, str(payload)
+
+    deleted = 0
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        key_id = str(item.get("key_id") or item.get("id") or "")
+        name = str(item.get("key_name") or item.get("name") or "")
+        key_email = str(item.get("email") or "")
+        oauth_email = str(item.get("oauth_email") or "")
+        if not key_id:
+            continue
+        if name == email or key_email == email or oauth_email == email:
+            del_ok, del_msg = delete_aether_key(
+                api_url=api_url,
+                api_token=api_token,
+                key_id=key_id,
+                device_id=device_id,
+                admin_email=admin_email,
+                admin_password=admin_password,
+            )
+            if not del_ok:
+                return False, del_msg
+            deleted += 1
+    return True, f"已删除 {deleted} 条旧记录"
+
+
 def fetch_aether_providers(
     *,
     api_url: str,
@@ -88,6 +277,7 @@ def fetch_aether_providers(
         return False, "Aether API URL 不能为空"
     base_url = _normalize_aether_base_url(api_url)
     endpoint = f"{base_url}/api/admin/providers/summary"
+
     def _request(token: str, current_device_id: str):
         response = cffi_requests.get(
             endpoint,
@@ -101,30 +291,20 @@ def fetch_aether_providers(
         if isinstance(data, dict):
             items = data.get("items")
             if isinstance(items, list):
-                return True, items, token, current_device_id
+                return True, items
         if isinstance(data, list):
-            return True, data, token, current_device_id
-        return False, "Aether Provider 列表返回格式不支持", token, current_device_id
+            return True, data
+        return False, "Aether Provider 列表返回格式不支持"
 
     try:
-        current_token = api_token
-        current_device_id = device_id or _generate_device_id()
-        if current_token:
-            ok, data, used_token, used_device_id = _request(current_token, current_device_id)
-            if ok:
-                return True, {"items": data, "api_token": used_token, "device_id": used_device_id}
-            if not (admin_email and admin_password and _should_relogin(data)):
-                return False, data
-
-        if not (admin_email and admin_password):
-            return False, "Aether API Token 不能为空"
-
-        login_ok, login_data = login_aether_admin(api_url=api_url, email=admin_email, password=admin_password)
-        if not login_ok:
-            return False, login_data
-        current_token = login_data.get("access_token")
-        current_device_id = login_data.get("device_id")
-        ok, data, used_token, used_device_id = _request(current_token, current_device_id)
+        ok, data, used_token, used_device_id = _request_with_reauth(
+            api_url=api_url,
+            api_token=api_token,
+            device_id=device_id,
+            admin_email=admin_email,
+            admin_password=admin_password,
+            func=_request,
+        )
         if ok:
             return True, {"items": data, "api_token": used_token, "device_id": used_device_id}
         return False, data
@@ -271,6 +451,18 @@ def upload_to_aether(
     current_device_id = device_id or _generate_device_id()
 
     try:
+        cleanup_ok, cleanup_msg = cleanup_aether_keys_by_email(
+            api_url=api_url,
+            api_token=api_token,
+            provider_id=provider_id,
+            email=account.email,
+            device_id=device_id,
+            admin_email=admin_email,
+            admin_password=admin_password,
+        )
+        if not cleanup_ok:
+            logger.warning("Aether 旧记录清理失败: %s", cleanup_msg)
+
         payload = _build_aether_payload(
             account,
             auth_type=auth_type,
@@ -286,23 +478,17 @@ def upload_to_aether(
                 impersonate="chrome120",
             )
             if response.status_code in (200, 201):
-                return True, "上传成功", token, request_device_id
-            return False, _extract_error(response), token, request_device_id
+                return True, "上传成功"
+            return False, _extract_error(response)
 
-        if api_token:
-            ok, msg, _, _ = _request(api_token, current_device_id)
-            if ok:
-                return True, msg
-            if not (admin_email and admin_password and _should_relogin(msg)):
-                return False, msg
-
-        if not (admin_email and admin_password):
-            return False, "Aether API Token 未配置"
-
-        login_ok, login_data = login_aether_admin(api_url=api_url, email=admin_email, password=admin_password)
-        if not login_ok:
-            return False, login_data
-        ok, msg, _, _ = _request(login_data.get("access_token"), login_data.get("device_id"))
+        ok, msg, _, _ = _request_with_reauth(
+            api_url=api_url,
+            api_token=api_token,
+            device_id=current_device_id,
+            admin_email=admin_email,
+            admin_password=admin_password,
+            func=_request,
+        )
         return ok, msg
     except Exception as exc:
         logger.error("Aether 上传异常: %s", exc)
@@ -401,20 +587,15 @@ def test_aether_connection(
                 return False, "未找到指定 Provider，请检查 Provider ID 是否正确"
             return False, _extract_error(response)
 
-        if api_token:
-            ok, msg = _request(api_token, current_device_id)
-            if ok:
-                return ok, msg
-            if not (admin_email and admin_password and _should_relogin(msg)):
-                return ok, msg
-
-        if not (admin_email and admin_password):
-            return False, "Aether API Token 不能为空"
-
-        login_ok, login_data = login_aether_admin(api_url=api_url, email=admin_email, password=admin_password)
-        if not login_ok:
-            return False, login_data
-        return _request(login_data.get("access_token"), login_data.get("device_id"))
+        ok, msg, _, _ = _request_with_reauth(
+            api_url=api_url,
+            api_token=api_token,
+            device_id=current_device_id,
+            admin_email=admin_email,
+            admin_password=admin_password,
+            func=_request,
+        )
+        return ok, msg
     except cffi_requests.exceptions.ConnectionError as exc:
         return False, f"无法连接到 Aether 服务器: {exc}"
     except cffi_requests.exceptions.Timeout:
