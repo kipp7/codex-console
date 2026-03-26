@@ -169,6 +169,13 @@ def create_app() -> FastAPI:
         """支付页面"""
         return templates.TemplateResponse(request, "payment.html", {"request": request})
 
+    @app.get("/cloud-mail-console", response_class=HTMLResponse)
+    async def cloud_mail_console_page(request: Request):
+        """Cloud Mail 工具台页面"""
+        if not _is_authenticated(request):
+            return _redirect_to_login(request)
+        return templates.TemplateResponse(request, "cloud_mail_console.html", {"request": request})
+
     @app.on_event("startup")
     async def startup_event():
         """应用启动事件"""

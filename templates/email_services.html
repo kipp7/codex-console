@@ -18,6 +18,7 @@
                 <a href="/" class="nav-link">注册</a>
                 <a href="/accounts" class="nav-link">账号管理</a>
                 <a href="/email-services" class="nav-link active">邮箱服务</a>
+                <a href="/cloud-mail-console" class="nav-link">Cloud Mail</a>
                 <a href="/payment" class="nav-link">支付</a>
                 <a href="/settings" class="nav-link">设置</a>
                 <a href="/logout" class="nav-link">退出</a>
@@ -117,6 +118,46 @@
                             <tbody id="custom-services-table">
                                 <tr>
                                     <td colspan="8">
+                                        <div class="empty-state">
+                                            <div class="skeleton skeleton-text"></div>
+                                            <div class="skeleton skeleton-text" style="width: 80%;"></div>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cloud Mail 发现与导入 -->
+            <div class="card">
+                <div class="card-header">
+                    <h3>☁️ Cloud Mail 发现与导入</h3>
+                    <button class="btn btn-secondary btn-sm" id="refresh-cloudmail-discovery-btn">刷新</button>
+                </div>
+                <div class="card-body">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:var(--spacing-md);margin-bottom:var(--spacing-md);flex-wrap:wrap;">
+                        <p style="margin:0;color:var(--text-secondary);font-size:0.875rem;">
+                            自动读取 `12_Pool-of-numbers/cloud-mail/mail-worker/wrangler*.toml`，提取当前 Cloud Mail 域名配置并导入到自定义邮箱服务。
+                        </p>
+                        <button class="btn btn-primary btn-sm" id="import-all-cloudmail-btn">全部导入</button>
+                    </div>
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>域名</th>
+                                    <th>API 地址</th>
+                                    <th>管理员邮箱</th>
+                                    <th>管理员密码</th>
+                                    <th>初始化地址</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="cloudmail-discovery-table">
+                                <tr>
+                                    <td colspan="6">
                                         <div class="empty-state">
                                             <div class="skeleton skeleton-text"></div>
                                             <div class="skeleton skeleton-text" style="width: 80%;"></div>

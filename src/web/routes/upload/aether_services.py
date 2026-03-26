@@ -294,6 +294,29 @@ async def login_aether_token(request: AetherLoginRequest):
     )
     if not success:
         return {"success": False, "message": data}
+
+    providers: list[dict] = []
+    providers_ok, providers_data = fetch_aether_providers(
+        api_url=request.api_url,
+        api_token=data.get("access_token"),
+        device_id=data.get("device_id"),
+    )
+    if providers_ok and isinstance(providers_data, dict):
+        raw_items = providers_data.get("items") or []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            provider_id = str(item.get("id") or item.get("provider_id") or "").strip()
+            name = str(item.get("name") or item.get("provider_name") or provider_id).strip()
+            provider_type = str(item.get("provider_type") or item.get("type") or "").strip()
+            if provider_id:
+                providers.append({
+                    "id": provider_id,
+                    "name": name,
+                    "provider_type": provider_type,
+                    "is_active": item.get("is_active", True),
+                })
+
     return {
         "success": True,
         "access_token": data.get("access_token"),
@@ -303,4 +326,5 @@ async def login_aether_token(request: AetherLoginRequest):
         "role": data.get("role"),
         "email": data.get("email"),
         "username": data.get("username"),
+        "providers": providers,
     }

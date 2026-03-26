@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Mail 工具台 - OpenAI 注册系统</title>
+    <link rel="stylesheet" href="/static/css/style.css?v={{ static_version }}">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛠️</text></svg>">
+    <style>
+        .tool-layout {
+            display: grid;
+            grid-template-columns: 260px minmax(0, 1fr);
+            gap: var(--spacing-lg);
+            align-items: start;
+        }
+
+        .tool-sidebar {
+            position: sticky;
+            top: calc(60px + var(--spacing-lg));
+        }
+
+        .tool-sidebar .search-input {
+            margin-bottom: var(--spacing-md);
+        }
+
+        .workflow-list {
+            display: grid;
+            gap: var(--spacing-sm);
+        }
+
+        .workflow-item {
+            width: 100%;
+            text-align: left;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--surface);
+            color: var(--text-primary);
+            padding: 12px 14px;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+
+        .workflow-item:hover {
+            border-color: var(--primary-color);
+            background: var(--surface-hover);
+        }
+
+        .workflow-item.active {
+            border-color: var(--primary-color);
+            background: var(--primary-light);
+        }
+
+        .workflow-item strong {
+            display: block;
+            font-size: 0.9rem;
+            margin-bottom: 4px;
+        }
+
+        .workflow-item span {
+            display: block;
+            font-size: 0.78rem;
+            color: var(--text-secondary);
+            line-height: 1.45;
+        }
+
+        .tool-main {
+            display: grid;
+            gap: var(--spacing-lg);
+        }
+
+        .tool-top {
+            display: grid;
+            grid-template-columns: minmax(240px, 0.7fr) minmax(0, 1.3fr);
+            gap: var(--spacing-lg);
+        }
+
+        .meta-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: var(--spacing-sm);
+            margin-top: var(--spacing-md);
+        }
+
+        .meta-item {
+            padding: 10px 12px;
+            border-radius: var(--radius);
+            background: var(--surface-hover);
+        }
+
+        .meta-item .label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+
+        .meta-item code {
+            font-size: 0.78rem;
+            word-break: break-all;
+        }
+
+        #summary-admin-password {
+            color: var(--primary-color);
+            font-weight: 600;
+        }
+
+        .defaults-box {
+            margin-top: var(--spacing-sm);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .default-chip {
+            display: inline-flex;
+            gap: 6px;
+            align-items: center;
+            padding: 6px 10px;
+            border-radius: var(--radius-full);
+            border: 1px solid var(--border);
+            background: var(--surface-hover);
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .preview-actions {
+            display: flex;
+            gap: var(--spacing-sm);
+            flex-wrap: wrap;
+            margin-bottom: var(--spacing-md);
+        }
+
+        .command-box,
+        .log-box,
+        .result-box {
+            min-height: 180px;
+            max-height: 420px;
+            overflow: auto;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--surface-hover);
+            padding: 12px 14px;
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            line-height: 1.55;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .form-sections {
+            display: grid;
+            gap: var(--spacing-md);
+        }
+
+        .section-title {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: var(--spacing-sm);
+        }
+
+        .fields-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: var(--spacing-md);
+        }
+
+        .advanced-details {
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--surface-hover);
+            padding: var(--spacing-sm) var(--spacing-md);
+        }
+
+        .advanced-details > summary {
+            cursor: pointer;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            user-select: none;
+        }
+
+        .advanced-details[open] > summary {
+            margin-bottom: var(--spacing-md);
+        }
+
+        .task-layout {
+            display: grid;
+            grid-template-columns: 280px minmax(0, 1fr);
+            gap: var(--spacing-lg);
+        }
+
+        .task-list {
+            display: grid;
+            gap: var(--spacing-sm);
+            align-content: start;
+        }
+
+        .task-item {
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--surface);
+            padding: 12px 14px;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+
+        .task-item:hover {
+            border-color: var(--primary-color);
+        }
+
+        .task-item.active {
+            border-color: var(--primary-color);
+            background: var(--primary-light);
+        }
+
+        .task-item strong {
+            display: block;
+            font-size: 0.85rem;
+            margin-bottom: 4px;
+        }
+
+        .task-item span {
+            display: block;
+            font-size: 0.76rem;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+
+        .task-summary {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: var(--spacing-md);
+            margin-bottom: var(--spacing-sm);
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 6px 10px;
+            border-radius: var(--radius-full);
+            background: var(--surface-hover);
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+        }
+
+        .status-badge.running {
+            background: var(--info-light);
+            color: var(--info-color);
+        }
+
+        .status-badge.completed {
+            background: var(--success-light);
+            color: var(--success-color);
+        }
+
+        .status-badge.failed {
+            background: var(--danger-light);
+            color: var(--danger-color);
+        }
+
+        .detail-tabs {
+            display: flex;
+            gap: var(--spacing-sm);
+            margin-bottom: var(--spacing-sm);
+        }
+
+        .detail-tab {
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text-secondary);
+            border-radius: var(--radius);
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 0.8rem;
+        }
+
+        .detail-tab.active {
+            border-color: var(--primary-color);
+            background: var(--primary-light);
+            color: var(--primary-color);
+        }
+
+        .detail-panel {
+            display: none;
+        }
+
+        .detail-panel.active {
+            display: block;
+        }
+
+        @media (max-width: 1100px) {
+            .tool-layout,
+            .tool-top,
+            .task-layout {
+                grid-template-columns: 1fr;
+            }
+
+            .tool-sidebar {
+                position: static;
+            }
+        }
+
+        @media (max-width: 800px) {
+            .fields-grid,
+            .meta-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <nav class="navbar">
+            <div class="nav-brand">
+                <h1>OpenAI 注册系统</h1>
+            </div>
+            <div class="nav-links">
+                <a href="/" class="nav-link">注册</a>
+                <a href="/accounts" class="nav-link">账号管理</a>
+                <a href="/email-services" class="nav-link">邮箱服务</a>
+                <a href="/cloud-mail-console" class="nav-link active">Cloud Mail</a>
+                <a href="/payment" class="nav-link">支付</a>
+                <a href="/settings" class="nav-link">设置</a>
+                <a href="/logout" class="nav-link">退出</a>
+            </div>
+            <button class="theme-toggle" onclick="theme.toggle()" title="切换主题">🌙</button>
+        </nav>
+
+        <main class="main-content">
+            <div class="page-header">
+                <h2>Cloud Mail 工具台</h2>
+                <p class="subtitle">接入 12_Pool-of-numbers 项目的脚本能力，独立运行，不影响当前控制台原有功能。</p>
+            </div>
+
+            <div class="tool-layout">
+                <aside class="tool-sidebar">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>流程</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="sidebar-search">
+                                <input id="workflow-search" class="search-input" type="text" placeholder="搜索流程">
+                            </div>
+                            <div id="workflow-list" class="workflow-list"></div>
+                        </div>
+                    </div>
+                </aside>
+
+                <section class="tool-main">
+                    <div class="tool-top">
+                        <div class="card">
+                            <div class="card-header">
+                                <h3 id="flow-title">加载中</h3>
+                            </div>
+                            <div class="card-body">
+                                <p id="flow-description" class="subtitle">正在读取流程信息</p>
+                                <div class="meta-grid">
+                                    <div class="meta-item">
+                                        <div class="label">脚本</div>
+                                        <code id="flow-script">-</code>
+                                    </div>
+                                    <div class="meta-item">
+                                        <div class="label">工具目录</div>
+                                        <code id="flow-toolkit-root">-</code>
+                                    </div>
+                                </div>
+                                <div class="defaults-box" id="flow-defaults"></div>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>运行摘要</h3>
+                            </div>
+                            <div class="card-body">
+                                <div class="meta-grid">
+                                    <div class="meta-item">
+                                        <div class="label">域名</div>
+                                        <code id="summary-domain">-</code>
+                                    </div>
+                                    <div class="meta-item">
+                                        <div class="label">管理员账号</div>
+                                        <code id="summary-admin-email">-</code>
+                                    </div>
+                                    <div class="meta-item">
+                                        <div class="label">管理员密码</div>
+                                        <code id="summary-admin-password">Admin123456</code>
+                                    </div>
+                                    <div class="meta-item">
+                                        <div class="label">API 地址</div>
+                                        <code id="summary-api-url">-</code>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>命令预览</h3>
+                            </div>
+                            <div class="card-body">
+                                <div class="preview-actions">
+                                    <button id="preview-button" type="button" class="btn btn-secondary">刷新命令</button>
+                                    <button id="copy-button" type="button" class="btn btn-secondary">复制命令</button>
+                                    <button id="run-button" type="button" class="btn btn-primary">开始执行</button>
+                                </div>
+                                <pre id="command-preview" class="command-box">等待生成命令…</pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>参数</h3>
+                        </div>
+                        <div class="card-body">
+                            <form id="workflow-form" class="form-sections"></form>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>任务</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="task-layout">
+                                <div id="task-list" class="task-list"></div>
+                                <div>
+                                    <div class="task-summary">
+                                        <div>
+                                            <div class="section-title">当前任务</div>
+                                            <strong id="task-label">未选择</strong>
+                                        </div>
+                                        <span id="task-status" class="status-badge">空闲</span>
+                                    </div>
+                                    <div class="detail-tabs">
+                                        <button id="tab-logs" type="button" class="detail-tab active">日志</button>
+                                        <button id="tab-result" type="button" class="detail-tab">结果</button>
+                                    </div>
+                                    <div id="panel-logs" class="detail-panel active">
+                                        <pre id="task-logs" class="log-box">未选择任务。</pre>
+                                    </div>
+                                    <div id="panel-result" class="detail-panel">
+                                        <pre id="task-result" class="result-box">暂无结果。</pre>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/js/utils.js?v={{ static_version }}"></script>
+    <script src="/static/js/cloud_mail_console.js?v={{ static_version }}"></script>
+</body>
+</html>

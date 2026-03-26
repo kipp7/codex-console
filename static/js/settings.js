@@ -1359,6 +1359,32 @@ function handleSelectAetherProvider() {
     document.getElementById('aether-service-provider-id').value = value;
 }
 
+function populateAetherProviders(providers) {
+    if (!elements.aetherProviderSelect) return;
+    const items = Array.isArray(providers) ? providers : [];
+    if (items.length === 0) {
+        elements.aetherProviderSelect.innerHTML = '<option value="">未找到 Provider</option>';
+        return;
+    }
+
+    elements.aetherProviderSelect.innerHTML = `
+        <option value="">请选择 Provider</option>
+        ${items.map(p => `
+            <option value="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}">
+                ${escapeHtml(p.name)} (${escapeHtml(p.id)})${p.provider_type ? ` - ${escapeHtml(p.provider_type)}` : ''}
+            </option>
+        `).join('')}
+    `;
+
+    if (items.length === 1) {
+        elements.aetherProviderSelect.value = items[0].id;
+        document.getElementById('aether-service-provider-id').value = items[0].id;
+        toast.success(`已自动选中 Provider: ${items[0].name}`);
+    } else {
+        toast.success(`已获取 ${items.length} 个 Provider`);
+    }
+}
+
 async function handleLoginAether() {
     const apiUrl = document.getElementById('aether-service-url').value.trim();
     const email = document.getElementById('aether-admin-email').value.trim();
@@ -1384,7 +1410,10 @@ async function handleLoginAether() {
         }
         document.getElementById('aether-service-token').value = result.access_token || '';
         document.getElementById('aether-service-device-id').value = result.device_id || '';
-        toast.success('已获取 access_token，请继续获取 Provider');
+        populateAetherProviders(result.providers || []);
+        if (!result.providers || result.providers.length === 0) {
+            toast.success('已获取 access_token，请继续获取 Provider');
+        }
     } catch (e) {
         toast.error('登录失败: ' + e.message);
     } finally {

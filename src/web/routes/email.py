@@ -3,7 +3,10 @@
 """
 
 import logging
+import tomllib
 from typing import List, Optional, Dict, Any
+from pathlib import Path
+import os
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -15,6 +18,27 @@ from ...services import EmailServiceFactory, EmailServiceType
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+WORKSPACE_ROOT = Path(__file__).resolve().parents[4]
+DEFAULT_CLOUDMAIL_ADMIN_PASSWORD = "Admin123456"
+
+
+def get_cloud_mail_toolkit_root() -> Path:
+    override = os.environ.get("CLOUD_MAIL_TOOLKIT_ROOT", "").strip()
+    candidates = []
+    if override:
+        candidates.append(Path(override))
+    candidates.extend([
+        WORKSPACE_ROOT / "12_Pool-of-numbers",
+        Path(__file__).resolve().parents[3].parent / "12_Pool-of-numbers",
+    ])
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
+def get_mail_worker_dir() -> Path:
+    return get_cloud_mail_toolkit_root() / "cloud-mail" / "mail-worker"
 
 
 # ============== Pydantic Models ==============
@@ -81,6 +105,40 @@ class OutlookBatchImportResponse(BaseModel):
     errors: List[str]
 
 
+class CloudMailDiscoveryItem(BaseModel):
+    domain: str
+    domains: List[str]
+    base_url: str
+    admin_email: str
+    admin_password: str
+    api_url: str
+    init_url: Optional[str] = None
+    jwt_secret: Optional[str] = None
+    config_path: str
+    worker_name: Optional[str] = None
+
+
+class CloudMailDiscoveryResponse(BaseModel):
+    total: int
+    items: List[CloudMailDiscoveryItem]
+
+
+class CloudMailImportItem(BaseModel):
+    domain: str
+    base_url: str
+    admin_email: str
+    admin_password: str
+    config_path: str
+    domains: List[str] = []
+    name: Optional[str] = None
+    priority: int = 0
+    enabled: bool = True
+
+
+class CloudMailImportRequest(BaseModel):
+    items: List[CloudMailImportItem]
+
+
 # ============== Helper Functions ==============
 
 # 敏感字段列表，返回响应时需要过滤
@@ -119,6 +177,78 @@ def service_to_response(service: EmailServiceModel) -> EmailServiceResponse:
         created_at=service.created_at.isoformat() if service.created_at else None,
         updated_at=service.updated_at.isoformat() if service.updated_at else None,
     )
+
+
+def discover_cloud_mail_configs() -> List[Dict[str, Any]]:
+    """扫描 12_Pool-of-numbers 中的 Cloud Mail 配置文件，提取可导入的服务信息。"""
+    mail_worker_dir = get_mail_worker_dir()
+    if not mail_worker_dir.exists():
+        return []
+
+    discovered: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def is_placeholder(value: str) -> bool:
+        return "${" in value or value.strip().startswith("$")
+
+    def path_sort_key(path: Path) -> tuple[int, str]:
+        priority = 0 if path.name == "wrangler.auto.toml" else 1
+        return (priority, path.name)
+
+    auto_file = mail_worker_dir / "wrangler.auto.toml"
+    candidate_paths = [auto_file] if auto_file.exists() else sorted(mail_worker_dir.glob("wrangler*.toml"), key=path_sort_key)
+
+    for path in candidate_paths:
+        try:
+            payload = tomllib.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("读取 Cloud Mail 配置失败 %s: %s", path, exc)
+            continue
+
+        vars_block = payload.get("vars") or {}
+        routes = payload.get("routes") or []
+        domains = vars_block.get("domain") or []
+        if isinstance(domains, str):
+            domains = [domains]
+        domains = [str(item).strip() for item in domains if str(item).strip()]
+
+        if not domains:
+            route_domains = []
+            for route in routes:
+                if isinstance(route, dict):
+                    pattern = str(route.get("pattern") or "").strip()
+                    if pattern:
+                        route_domains.append(pattern)
+            domains = route_domains
+
+        admin_email = str(vars_block.get("admin") or "").strip()
+        jwt_secret = str(vars_block.get("jwt_secret") or "").strip() or None
+        worker_name = str(payload.get("name") or "").strip() or None
+        if is_placeholder(admin_email or "") or is_placeholder(jwt_secret or "") or is_placeholder(worker_name or ""):
+            continue
+
+        for domain in domains:
+            if is_placeholder(domain):
+                continue
+            base_url = f"https://{domain}"
+            key = (str(path), domain)
+            if key in seen:
+                continue
+            seen.add(key)
+            discovered.append({
+                "domain": domain,
+                "domains": domains,
+                "base_url": base_url,
+                "admin_email": admin_email or f"admin@{domain}",
+                "admin_password": DEFAULT_CLOUDMAIL_ADMIN_PASSWORD,
+                "api_url": f"{base_url}/api",
+                "init_url": f"{base_url}/api/init/{jwt_secret}" if jwt_secret else None,
+                "jwt_secret": jwt_secret,
+                "config_path": str(path),
+                "worker_name": worker_name,
+            })
+
+    return discovered
 
 
 # ============== API Endpoints ==============
@@ -166,6 +296,64 @@ async def get_email_services_stats():
                 stats['imap_mail_count'] = count
 
         return stats
+
+
+@router.get("/cloudmail/discovery", response_model=CloudMailDiscoveryResponse)
+async def get_cloud_mail_discovery():
+    """发现 12_Pool-of-numbers 里的 Cloud Mail 域名配置。"""
+    items = discover_cloud_mail_configs()
+    return CloudMailDiscoveryResponse(total=len(items), items=[CloudMailDiscoveryItem(**item) for item in items])
+
+
+@router.post("/cloudmail/import")
+async def import_cloud_mail_services(request: CloudMailImportRequest):
+    """将发现到的 Cloud Mail 配置导入为自定义邮箱服务。"""
+    if not request.items:
+        raise HTTPException(status_code=400, detail="没有可导入的项目")
+
+    imported: List[Dict[str, Any]] = []
+    with get_db() as db:
+        for item in request.items:
+            service_name = item.name or f"CloudMail {item.domain}"
+            service_config = {
+                "base_url": item.base_url.rstrip("/"),
+                "admin_email": item.admin_email,
+                "admin_password": item.admin_password or DEFAULT_CLOUDMAIL_ADMIN_PASSWORD,
+                "domain": item.domains or [item.domain],
+            }
+
+            existing = db.query(EmailServiceModel).filter(
+                EmailServiceModel.service_type == "cloud_mail"
+            ).all()
+            target = None
+            for service in existing:
+                config = service.config or {}
+                if str(config.get("base_url") or "").rstrip("/") == service_config["base_url"]:
+                    target = service
+                    break
+
+            if target:
+                target.name = service_name
+                target.config = service_config
+                target.enabled = item.enabled
+                target.priority = item.priority
+                db.commit()
+                db.refresh(target)
+                imported.append({"id": target.id, "name": target.name, "updated": True})
+            else:
+                service = EmailServiceModel(
+                    service_type="cloud_mail",
+                    name=service_name,
+                    config=service_config,
+                    enabled=item.enabled,
+                    priority=item.priority,
+                )
+                db.add(service)
+                db.commit()
+                db.refresh(service)
+                imported.append({"id": service.id, "name": service.name, "updated": False})
+
+    return {"success": True, "count": len(imported), "items": imported}
 
 
 @router.get("/types")

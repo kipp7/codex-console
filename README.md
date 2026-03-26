@@ -46,6 +46,7 @@
 - 支持 SQLite 和远程 PostgreSQL
 - 支持打包为 Windows/Linux/macOS 可执行文件
 - 更适配当前 OpenAI 注册与登录链路
+- 新增 `Cloud Mail` 工具台，可接入旁边 `12_Pool-of-numbers` 项目的脚本能力
 
 ## 环境要求
 
@@ -117,6 +118,10 @@ codex-console.exe --access-password mypassword
 启动后访问:
 
 [http://127.0.0.1:8000](http://127.0.0.1:8000)
+
+登录后可以在导航栏进入:
+
+- `Cloud Mail`
 
 ## Docker 部署
 

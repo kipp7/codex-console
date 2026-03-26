@@ -5,6 +5,7 @@
 // 状态
 let outlookServices = [];
 let customServices = [];  // 合并 moe_mail + temp_mail + duck_mail + freemail + imap_mail
+let discoveredCloudMail = [];
 let selectedOutlook = new Set();
 let selectedCustom = new Set();
 
@@ -41,6 +42,9 @@ const elements = {
     tempmailApi: document.getElementById('tempmail-api'),
     tempmailEnabled: document.getElementById('tempmail-enabled'),
     testTempmailBtn: document.getElementById('test-tempmail-btn'),
+    cloudmailDiscoveryTable: document.getElementById('cloudmail-discovery-table'),
+    refreshCloudmailDiscoveryBtn: document.getElementById('refresh-cloudmail-discovery-btn'),
+    importAllCloudmailBtn: document.getElementById('import-all-cloudmail-btn'),
 
     // 添加自定义域名模态框
     addCustomModal: document.getElementById('add-custom-modal'),
@@ -91,6 +95,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadOutlookServices();
     loadCustomServices();
     loadTempmailConfig();
+    loadCloudMailDiscovery();
     initEventListeners();
 });
 
@@ -162,11 +167,155 @@ function initEventListeners() {
     // 临时邮箱配置
     elements.tempmailForm.addEventListener('submit', handleSaveTempmail);
     elements.testTempmailBtn.addEventListener('click', handleTestTempmail);
+    elements.refreshCloudmailDiscoveryBtn?.addEventListener('click', loadCloudMailDiscovery);
+    elements.importAllCloudmailBtn?.addEventListener('click', handleImportAllCloudMail);
 
     // 点击其他地方关闭更多菜单
     document.addEventListener('click', () => {
         document.querySelectorAll('.dropdown-menu.active').forEach(m => m.classList.remove('active'));
     });
+}
+
+async function loadCloudMailDiscovery() {
+    if (!elements.cloudmailDiscoveryTable) return;
+
+    try {
+        const data = await api.get('/email-services/cloudmail/discovery');
+        discoveredCloudMail = data.items || [];
+
+        if (discoveredCloudMail.length === 0) {
+            elements.cloudmailDiscoveryTable.innerHTML = `
+                <tr>
+                    <td colspan="6">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">☁️</div>
+                            <div class="empty-state-title">未发现 Cloud Mail 配置</div>
+                            <div class="empty-state-description">请先在 12_Pool-of-numbers 中完成部署，或确认 wrangler.auto.toml 存在。</div>
+                        </div>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        elements.cloudmailDiscoveryTable.innerHTML = discoveredCloudMail.map((item, index) => `
+            <tr>
+                <td>${escapeHtml(item.domain)}</td>
+                <td style="font-size:0.75rem;">${escapeHtml(item.base_url)}</td>
+                <td>${escapeHtml(item.admin_email)}</td>
+                <td class="password-cell">
+                    <span class="password-hidden" title="悬停查看">${escapeHtml(item.admin_password)}</span>
+                </td>
+                <td style="font-size:0.72rem;">
+                    ${item.init_url ? `<a href="${escapeHtml(item.init_url)}" target="_blank" style="color: var(--primary-color);">${escapeHtml(item.init_url)}</a>` : '<span style="color: var(--text-muted);">-</span>'}
+                </td>
+                <td>
+                    <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">
+                        <button class="btn btn-primary btn-sm" onclick="importSingleCloudMail(${index})">导入</button>
+                        <button class="btn btn-secondary btn-sm" onclick="copyCloudMailField(${index}, 'api')">复制 API</button>
+                        <button class="btn btn-secondary btn-sm" onclick="copyCloudMailField(${index}, 'email')">复制邮箱</button>
+                        <button class="btn btn-secondary btn-sm" onclick="copyCloudMailField(${index}, 'password')">复制密码</button>
+                        <button class="btn btn-secondary btn-sm" onclick="copyCloudMailField(${index}, 'all')">复制全部</button>
+                    </div>
+                </td>
+            </tr>
+        `).join('');
+    } catch (error) {
+        console.error('加载 Cloud Mail 发现列表失败:', error);
+        elements.cloudmailDiscoveryTable.innerHTML = `
+            <tr>
+                <td colspan="6">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">❌</div>
+                        <div class="empty-state-title">加载失败</div>
+                        <div class="empty-state-description">${escapeHtml(error.message || '未知错误')}</div>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }
+}
+
+async function copyCloudMailField(index, field) {
+    const item = discoveredCloudMail[index];
+    if (!item) {
+        toast.error('未找到 Cloud Mail 配置');
+        return;
+    }
+
+    let text = '';
+    let label = '';
+
+    if (field === 'api') {
+        text = item.api_url || item.base_url || '';
+        label = 'API 地址';
+    } else if (field === 'email') {
+        text = item.admin_email || '';
+        label = '管理员邮箱';
+    } else if (field === 'password') {
+        text = item.admin_password || '';
+        label = '管理员密码';
+    } else {
+        text = [
+            `域名: ${item.domain || ''}`,
+            `API: ${item.api_url || item.base_url || ''}`,
+            `管理员邮箱: ${item.admin_email || ''}`,
+            `管理员密码: ${item.admin_password || ''}`,
+            `初始化地址: ${item.init_url || ''}`,
+        ].join('\n');
+        label = '完整信息';
+    }
+
+    if (!text) {
+        toast.warning(`${label} 为空，无法复制`);
+        return;
+    }
+
+    try {
+        await navigator.clipboard.writeText(text);
+        toast.success(`已复制${label}`);
+    } catch (error) {
+        toast.error(`复制${label}失败`);
+    }
+}
+
+async function importSingleCloudMail(index) {
+    const item = discoveredCloudMail[index];
+    if (!item) return;
+    await importCloudMailItems([item]);
+}
+
+async function handleImportAllCloudMail() {
+    if (!discoveredCloudMail.length) {
+        toast.warning('没有可导入的 Cloud Mail 配置');
+        return;
+    }
+    await importCloudMailItems(discoveredCloudMail);
+}
+
+async function importCloudMailItems(items) {
+    try {
+        const payload = {
+            items: items.map(item => ({
+                domain: item.domain,
+                domains: item.domains || [item.domain],
+                base_url: item.base_url,
+                admin_email: item.admin_email,
+                admin_password: item.admin_password,
+                config_path: item.config_path,
+                name: `CloudMail ${item.domain}`,
+                enabled: true,
+                priority: 0,
+            }))
+        };
+        const result = await api.post('/email-services/cloudmail/import', payload);
+        toast.success(`已导入 ${result.count} 个 Cloud Mail 服务`);
+        loadCustomServices();
+        loadStats();
+        loadCloudMailDiscovery();
+    } catch (error) {
+        toast.error('导入失败: ' + error.message);
+    }
 }
 
 function toggleEmailMoreMenu(btn) {
