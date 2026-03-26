@@ -89,6 +89,7 @@ const elements = {
     autoUploadAether: document.getElementById('auto-upload-aether'),
     aetherServiceSelectGroup: document.getElementById('aether-service-select-group'),
     aetherServiceSelect: document.getElementById('aether-service-select'),
+    aetherStatusContent: document.getElementById('aether-status-content'),
     autoUploadCpa: document.getElementById('auto-upload-cpa'),
     cpaServiceSelectGroup: document.getElementById('cpa-service-select-group'),
     cpaServiceSelect: document.getElementById('cpa-service-select'),
@@ -104,6 +105,7 @@ const elements = {
 document.addEventListener('DOMContentLoaded', () => {
     initEventListeners();
     loadAvailableServices();
+    loadAetherStatusCard();
     loadRecentAccounts();
     startAccountsPolling();
     initVisibilityReconnect();
@@ -119,6 +121,32 @@ async function initAutoUploadOptions() {
         loadServiceSelect('/sub2api-services?enabled=true', elements.sub2apiServiceSelect, elements.autoUploadSub2api, elements.sub2apiServiceSelectGroup),
         loadServiceSelect('/tm-services?enabled=true', elements.tmServiceSelect, elements.autoUploadTm, elements.tmServiceSelectGroup),
     ]);
+}
+
+async function loadAetherStatusCard() {
+    if (!elements.aetherStatusContent) return;
+
+    try {
+        const services = await api.get('/aether-services?enabled=true');
+        if (!services || services.length === 0) {
+            elements.aetherStatusContent.innerHTML = `
+                <span style="color: var(--warning-color);">未配置可用 Aether 服务。</span>
+                <a href="/settings" style="margin-left: 6px; color: var(--primary-color); text-decoration: none;">去设置</a>
+            `;
+            return;
+        }
+
+        const primary = services[0];
+        elements.aetherStatusContent.innerHTML = `
+            <div><strong>${escapeHtml(primary.name)}</strong></div>
+            <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">Provider: ${escapeHtml(primary.provider_id)}</div>
+            <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">地址: ${escapeHtml(primary.api_url)}</div>
+        `;
+    } catch (error) {
+        elements.aetherStatusContent.innerHTML = `
+            <span style="color: var(--danger-color);">读取 Aether 状态失败</span>
+        `;
+    }
 }
 
 // 通用：构建自定义多选下拉组件并处理联动

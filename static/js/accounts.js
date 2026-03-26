@@ -543,6 +543,11 @@ async function handleBatchValidate() {
     try {
         const result = await api.post('/accounts/batch-validate', buildBatchPayload());
         toast.info(`有效: ${result.valid_count}，无效: ${result.invalid_count}`);
+        showActionResult('批量验证完成', [
+            `有效账号: ${result.valid_count}`,
+            `无效账号: ${result.invalid_count}`,
+            `总数: ${(result.valid_count || 0) + (result.invalid_count || 0)}`
+        ]);
         loadAccounts();
     } catch (error) {
         toast.error('批量验证失败: ' + error.message);
@@ -944,9 +949,17 @@ async function uploadToAether(id) {
         const result = await api.post(`/accounts/${id}/upload-aether`, payload);
         if (result.success) {
             toast.success('上传成功');
+            showActionResult('Aether 上传完成', [
+                `账号 ID: ${id}`,
+                result.message || '上传成功'
+            ]);
             loadAccounts();
         } else {
             toast.error('上传失败: ' + (result.error || '未知错误'));
+            showActionResult('Aether 上传失败', [
+                `账号 ID: ${id}`,
+                result.error || '未知错误'
+            ]);
         }
     } catch (error) {
         toast.error('上传失败: ' + error.message);
@@ -976,6 +989,11 @@ async function handleBatchUploadAether() {
         if (result.skipped_count > 0) message += `, 跳过: ${result.skipped_count}`;
 
         toast.success(message);
+        showActionResult('批量上传 Aether 完成', [
+            `成功: ${result.success_count}`,
+            `失败: ${result.failed_count || 0}`,
+            `跳过: ${result.skipped_count || 0}`
+        ]);
         loadAccounts();
     } catch (error) {
         toast.error('批量上传失败: ' + error.message);
@@ -997,9 +1015,17 @@ async function uploadToCpa(id) {
 
         if (result.success) {
             toast.success('上传成功');
+            showActionResult('CPA 上传完成', [
+                `账号 ID: ${id}`,
+                result.message || '上传成功'
+            ]);
             loadAccounts();
         } else {
             toast.error('上传失败: ' + (result.error || '未知错误'));
+            showActionResult('CPA 上传失败', [
+                `账号 ID: ${id}`,
+                result.error || '未知错误'
+            ]);
         }
     } catch (error) {
         toast.error('上传失败: ' + error.message);
@@ -1074,6 +1100,10 @@ async function handleBatchCheckSubscription() {
         let message = `成功: ${result.success_count}`;
         if (result.failed_count > 0) message += `, 失败: ${result.failed_count}`;
         toast.success(message);
+        showActionResult('批量检测订阅完成', [
+            `成功: ${result.success_count}`,
+            `失败: ${result.failed_count || 0}`
+        ]);
         loadAccounts();
     } catch (e) {
         toast.error('批量检测失败: ' + e.message);
@@ -1196,9 +1226,17 @@ async function uploadToSub2Api(id) {
         const result = await api.post(`/accounts/${id}/upload-sub2api`, payload);
         if (result.success) {
             toast.success('上传成功');
+            showActionResult('Sub2API 上传完成', [
+                `账号 ID: ${id}`,
+                result.message || '上传成功'
+            ]);
             loadAccounts();
         } else {
             toast.error('上传失败: ' + (result.error || result.message || '未知错误'));
+            showActionResult('Sub2API 上传失败', [
+                `账号 ID: ${id}`,
+                result.error || result.message || '未知错误'
+            ]);
         }
     } catch (e) {
         toast.error('上传失败: ' + e.message);
@@ -1283,8 +1321,16 @@ async function uploadToTm(id) {
         const result = await api.post(`/accounts/${id}/upload-tm`, payload);
         if (result.success) {
             toast.success('上传成功');
+            showActionResult('Team Manager 上传完成', [
+                `账号 ID: ${id}`,
+                result.message || '上传成功'
+            ]);
         } else {
             toast.error('上传失败: ' + (result.message || '未知错误'));
+            showActionResult('Team Manager 上传失败', [
+                `账号 ID: ${id}`,
+                result.message || '未知错误'
+            ]);
         }
     } catch (e) {
         toast.error('上传失败: ' + e.message);
@@ -1374,6 +1420,40 @@ function showInboxCodeResult(code, email) {
                 ${escapeHtml(code)}
             </div>
             <button class="btn btn-primary" onclick="copyToClipboard('${escapeHtml(code)}')">复制验证码</button>
+        </div>
+    `;
+    elements.detailModal.classList.add('active');
+}
+
+function showActionResult(title, lines = []) {
+    const rows = (Array.isArray(lines) ? lines : [lines]).filter(Boolean);
+    elements.modalBody.innerHTML = `
+        <div style="padding: 20px 16px;">
+            <div style="font-size: 1rem; font-weight: 600; margin-bottom: 14px;">${escapeHtml(title)}</div>
+            <div style="display: grid; gap: 10px;">
+                ${rows.map(row => `
+                    <div style="padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-hover); font-size: 0.875rem; line-height: 1.55;">
+                        ${escapeHtml(row)}
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    `;
+    elements.detailModal.classList.add('active');
+}
+
+function showActionResultModal(title, lines = []) {
+    const items = Array.isArray(lines) ? lines.filter(Boolean) : [String(lines)];
+    elements.modalBody.innerHTML = `
+        <div style="padding: 20px 16px;">
+            <div style="font-size: 1rem; font-weight: 600; margin-bottom: 14px;">${escapeHtml(title)}</div>
+            <div style="display: grid; gap: 10px;">
+                ${items.map(line => `
+                    <div style="padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-hover); font-size: 0.875rem; line-height: 1.55;">
+                        ${escapeHtml(line)}
+                    </div>
+                `).join('')}
+            </div>
         </div>
     `;
     elements.detailModal.classList.add('active');
