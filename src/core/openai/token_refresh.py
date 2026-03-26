@@ -20,6 +20,16 @@ from ...database.models import Account
 logger = logging.getLogger(__name__)
 
 
+def _status_from_error_message(error_message: Optional[str]) -> str:
+    """根据验证/刷新错误信息推断账号状态。"""
+    text = (error_message or "").lower()
+    if "封禁" in text or "banned" in text or "403" in text:
+        return "banned"
+    if "过期" in text or "无效" in text or "401" in text or "access_token" in text:
+        return "expired"
+    return "failed"
+
+
 @dataclass
 class TokenRefreshResult:
     """Token 刷新结果"""
@@ -295,7 +305,8 @@ def refresh_account_token(account_id: int, proxy_url: Optional[str] = None) -> T
             # 更新数据库
             update_data = {
                 "access_token": result.access_token,
-                "last_refresh": datetime.utcnow()
+                "last_refresh": datetime.utcnow(),
+                "status": "active",
             }
 
             if result.refresh_token:
@@ -305,6 +316,12 @@ def refresh_account_token(account_id: int, proxy_url: Optional[str] = None) -> T
                 update_data["expires_at"] = result.expires_at
 
             crud.update_account(db, account_id, **update_data)
+        else:
+            crud.update_account(
+                db,
+                account_id,
+                status=_status_from_error_message(result.error_message)
+            )
 
         return result
 
@@ -326,7 +343,14 @@ def validate_account_token(account_id: int, proxy_url: Optional[str] = None) -> 
             return False, "账号不存在"
 
         if not account.access_token:
+            crud.update_account(db, account_id, status="failed")
             return False, "账号没有 access_token"
 
         manager = TokenRefreshManager(proxy_url=proxy_url)
-        return manager.validate_token(account.access_token)
+        is_valid, error = manager.validate_token(account.access_token)
+        crud.update_account(
+            db,
+            account_id,
+            status="active" if is_valid else _status_from_error_message(error)
+        )
+        return is_valid, error

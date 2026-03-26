@@ -16,7 +16,7 @@ from ...config.constants import AccountStatus
 from ...config.settings import get_settings
 from ...core.openai.token_refresh import refresh_account_token as do_refresh
 from ...core.openai.token_refresh import validate_account_token as do_validate
-from ...core.upload.aether_upload import batch_upload_to_aether, upload_to_aether
+from ...core.upload.aether_upload import batch_upload_to_aether, prepare_account_for_aether, sync_account_status_from_message, upload_to_aether
 from ...core.upload.cpa_upload import generate_token_json, batch_upload_to_cpa, upload_to_cpa
 from ...core.upload.team_manager_upload import upload_to_team_manager, batch_upload_to_team_manager
 from ...core.upload.sub2api_upload import batch_upload_to_sub2api, upload_to_sub2api
@@ -868,6 +868,11 @@ async def upload_account_to_aether(account_id: int, request: Optional[AetherUplo
         if not account:
             raise HTTPException(status_code=404, detail="账号不存在")
 
+        ready, reason = prepare_account_for_aether(db, account, auth_type=svc.auth_type)
+        if not ready:
+            sync_account_status_from_message(db, account.id, reason)
+            return {"success": False, "error": reason}
+
         success, message = upload_to_aether(
             account,
             api_url=svc.api_url,
@@ -885,6 +890,7 @@ async def upload_account_to_aether(account_id: int, request: Optional[AetherUplo
             account.aether_uploaded_at = datetime.utcnow()
             db.commit()
             return {"success": True, "message": message}
+        sync_account_status_from_message(db, account.id, message)
         return {"success": False, "error": message}
 
 

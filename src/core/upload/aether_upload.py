@@ -9,10 +9,12 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from curl_cffi import requests as cffi_requests
+from sqlalchemy.exc import SQLAlchemyError
 
-from ...config.settings import get_settings
+from ...database import crud
 from ...database.models import Account
 from ...database.session import get_db
+from ..openai.token_refresh import TokenRefreshManager
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,22 @@ def _should_relogin(message: str) -> bool:
         "forbidden",
     )
     return any(marker in text for marker in markers)
+
+
+def _status_from_error_message(error_message: Optional[str]) -> str:
+    text = (error_message or "").lower()
+    if "封禁" in text or "banned" in text or "403" in text:
+        return "banned"
+    if "过期" in text or "无效" in text or "401" in text or "refresh_token" in text:
+        return "expired"
+    return "failed"
+
+
+def sync_account_status_from_message(db, account_id: int, error_message: Optional[str]) -> str:
+    """根据错误信息把账号状态同步到数据库。"""
+    status = _status_from_error_message(error_message)
+    crud.update_account(db, account_id, status=status)
+    return status
 
 
 def _normalize_aether_base_url(api_url: str) -> str:
@@ -60,6 +78,32 @@ def _build_headers(api_token: str, *, device_id: Optional[str] = None) -> Dict[s
     if device_id:
         headers["X-Client-Device-Id"] = device_id
     return headers
+
+
+def _post_json_with_retry(
+    url: str,
+    *,
+    headers: Dict[str, str],
+    payload: Dict[str, Any],
+    timeout: int = 30,
+    attempts: int = 3,
+):
+    last_exc = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return cffi_requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+                impersonate="chrome120",
+            )
+        except cffi_requests.exceptions.ConnectionError as exc:
+            last_exc = exc
+            logger.warning("Aether POST 连接异常，第 %s/%s 次: %s", attempt, attempts, exc)
+            if attempt == attempts:
+                raise
+    raise last_exc  # pragma: no cover
 
 
 def _extract_error(response) -> str:
@@ -378,6 +422,57 @@ def _merge_extra_payload(payload: Dict[str, Any], extra_payload: Optional[str]) 
     return payload
 
 
+def prepare_account_for_aether(
+    db,
+    account: Account,
+    *,
+    auth_type: str,
+) -> Tuple[bool, Optional[str]]:
+    """
+    上传前做本地账号预检。
+
+    对 OAuth 账号，先尝试用 refresh_token 换新 token：
+    - 成功则更新本地 refresh/access/expires/status
+    - 失败则把 status 落库成 expired/banned/failed
+    """
+    normalized_auth_type = (auth_type or "oauth").strip().lower()
+    if normalized_auth_type != "oauth":
+        if account.status == "banned":
+            return False, "账号已标记为封禁"
+        return True, None
+
+    if not account.refresh_token:
+        sync_account_status_from_message(db, account.id, "账号缺少 refresh_token，无法上传到 Aether")
+        return False, "账号缺少 refresh_token，无法上传到 Aether"
+
+    manager = TokenRefreshManager(proxy_url=None)
+    result = manager.refresh_by_oauth_token(
+        refresh_token=account.refresh_token,
+        client_id=account.client_id,
+    )
+
+    if not result.success:
+        sync_account_status_from_message(db, account.id, result.error_message)
+        return False, f"Refresh Token 验证失败: {result.error_message}"
+
+    update_data = {
+        "access_token": result.access_token,
+        "refresh_token": result.refresh_token or account.refresh_token,
+        "last_refresh": datetime.utcnow(),
+        "status": "active",
+    }
+    if result.expires_at:
+        update_data["expires_at"] = result.expires_at
+    updated = crud.update_account(db, account.id, **update_data)
+    if updated:
+        account.access_token = updated.access_token
+        account.refresh_token = updated.refresh_token
+        account.expires_at = updated.expires_at
+        account.last_refresh = updated.last_refresh
+        account.status = updated.status
+    return True, None
+
+
 def _build_aether_payload(
     account: Account,
     *,
@@ -476,12 +571,11 @@ def upload_to_aether(
             }
 
             def _request(token: str, request_device_id: str):
-                response = cffi_requests.post(
+                response = _post_json_with_retry(
                     endpoint,
                     headers=_build_headers(token, device_id=request_device_id),
-                    json=payload,
+                    payload=payload,
                     timeout=30,
-                    impersonate="chrome120",
                 )
                 if response.status_code in (200, 201):
                     return True, "上传成功"
@@ -496,12 +590,11 @@ def upload_to_aether(
             )
 
             def _request(token: str, request_device_id: str):
-                response = cffi_requests.post(
+                response = _post_json_with_retry(
                     endpoint,
                     headers=_build_headers(token, device_id=request_device_id),
-                    json=payload,
+                    payload=payload,
                     timeout=30,
-                    impersonate="chrome120",
                 )
                 if response.status_code in (200, 201):
                     return True, "上传成功"
@@ -543,11 +636,30 @@ def batch_upload_to_aether(
     }
 
     with get_db() as db:
+        account_map = {
+            account.id: account
+            for account in db.query(Account).filter(Account.id.in_(account_ids)).all()
+        }
         for account_id in account_ids:
-            account = db.query(Account).filter(Account.id == account_id).first()
+            account = account_map.get(account_id)
             if not account:
                 results["failed_count"] += 1
                 results["details"].append({"id": account_id, "email": None, "success": False, "error": "账号不存在"})
+                continue
+
+            try:
+                ready, reason = prepare_account_for_aether(db, account, auth_type=auth_type)
+            except SQLAlchemyError as exc:
+                results["failed_count"] += 1
+                results["details"].append({"id": account_id, "email": account.email, "success": False, "error": f"数据库更新失败: {exc}"})
+                continue
+
+            if not ready:
+                if account.status in ("expired", "banned", "failed"):
+                    results["skipped_count"] += 1
+                else:
+                    results["failed_count"] += 1
+                results["details"].append({"id": account_id, "email": account.email, "success": False, "error": reason})
                 continue
 
             success, message = upload_to_aether(
@@ -563,13 +675,18 @@ def batch_upload_to_aether(
                 extra_payload=extra_payload,
             )
             if success:
-                account.aether_uploaded = True
-                account.aether_uploaded_at = datetime.utcnow()
-                db.commit()
+                crud.update_account(
+                    db,
+                    account_id,
+                    aether_uploaded=True,
+                    aether_uploaded_at=datetime.utcnow(),
+                    status="active",
+                )
                 results["success_count"] += 1
                 results["details"].append({"id": account_id, "email": account.email, "success": True, "message": message})
             else:
-                if "缺少" in message:
+                new_status = sync_account_status_from_message(db, account_id, message)
+                if new_status in ("expired", "banned", "failed"):
                     results["skipped_count"] += 1
                 else:
                     results["failed_count"] += 1
