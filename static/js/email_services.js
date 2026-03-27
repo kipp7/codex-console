@@ -95,7 +95,6 @@ document.addEventListener('DOMContentLoaded', () => {
     loadOutlookServices();
     loadCustomServices();
     loadTempmailConfig();
-    syncMainCloudMailDomains();
     loadCloudMailDiscovery();
     initEventListeners();
 });
@@ -187,7 +186,7 @@ async function loadCloudMailDiscovery() {
         if (discoveredCloudMail.length === 0) {
             elements.cloudmailDiscoveryTable.innerHTML = `
                 <tr>
-                    <td colspan="6">
+                    <td colspan="7">
                         <div class="empty-state">
                             <div class="empty-state-icon">☁️</div>
                             <div class="empty-state-title">未发现 Cloud Mail 配置</div>
@@ -198,34 +197,12 @@ async function loadCloudMailDiscovery() {
             `;
             return;
         }
-
-        elements.cloudmailDiscoveryTable.innerHTML = discoveredCloudMail.map((item, index) => `
-            <tr>
-                <td>${escapeHtml(item.domain)}</td>
-                <td style="font-size:0.75rem;">${escapeHtml(item.base_url)}</td>
-                <td>${escapeHtml(item.admin_email)}</td>
-                <td class="password-cell">
-                    <span class="password-hidden" title="悬停查看">${escapeHtml(item.admin_password)}</span>
-                </td>
-                <td style="font-size:0.72rem;">
-                    ${item.init_url ? `<a href="${escapeHtml(item.init_url)}" target="_blank" style="color: var(--primary-color);">${escapeHtml(item.init_url)}</a>` : '<span style="color: var(--text-muted);">-</span>'}
-                </td>
-                <td>
-                    <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">
-                        <button class="btn btn-primary btn-sm" onclick="importSingleCloudMail(${index})">导入</button>
-                        <button class="btn btn-secondary btn-sm" onclick="copyCloudMailField(${index}, 'api')">复制 API</button>
-                        <button class="btn btn-secondary btn-sm" onclick="copyCloudMailField(${index}, 'email')">复制邮箱</button>
-                        <button class="btn btn-secondary btn-sm" onclick="copyCloudMailField(${index}, 'password')">复制密码</button>
-                        <button class="btn btn-secondary btn-sm" onclick="copyCloudMailField(${index}, 'all')">复制全部</button>
-                    </div>
-                </td>
-            </tr>
-        `).join('');
+        renderCloudMailDiscoveryTable();
     } catch (error) {
         console.error('加载 Cloud Mail 发现列表失败:', error);
         elements.cloudmailDiscoveryTable.innerHTML = `
             <tr>
-                <td colspan="6">
+                <td colspan="7">
                     <div class="empty-state">
                         <div class="empty-state-icon">❌</div>
                         <div class="empty-state-title">加载失败</div>
@@ -237,25 +214,58 @@ async function loadCloudMailDiscovery() {
     }
 }
 
-async function syncMainCloudMailDomains() {
-    try {
-        const payload = await api.get('/cloud-mail/main-domains');
-        const items = payload.items || [];
-        if (items.length === 0) {
-            return;
+function isCloudMailImported(item) {
+    return customServices.some(service => {
+        if (service._subType !== 'cloudmail') {
+            return false;
         }
-        await importCloudMailItems(
-            items.map(item => ({
-                ...item,
-                base_url: item.base_url || (item.api_url ? item.api_url.replace(/\/api$/, '') : ''),
-                config_path: item.config_path || '',
-                domains: item.domains || [item.domain],
-            })),
-            { silent: true, refreshDiscovery: false }
-        );
-    } catch (error) {
-        console.error('自动同步主号 Cloud Mail 域名失败:', error);
-    }
+        const config = service.config || {};
+        const serviceBaseUrl = String(config.base_url || '').replace(/\/$/, '');
+        const itemBaseUrl = String(item.base_url || '').replace(/\/$/, '');
+        if (serviceBaseUrl && itemBaseUrl && serviceBaseUrl === itemBaseUrl) {
+            return true;
+        }
+        const domains = config.domain;
+        if (Array.isArray(domains)) {
+            return domains.includes(item.domain);
+        }
+        return String(domains || '') === item.domain;
+    });
+}
+
+function renderCloudMailDiscoveryTable() {
+    if (!elements.cloudmailDiscoveryTable) return;
+
+    elements.cloudmailDiscoveryTable.innerHTML = discoveredCloudMail.map((item, index) => {
+        const imported = isCloudMailImported(item);
+        return `
+            <tr>
+                <td>${escapeHtml(item.domain)}</td>
+                <td>
+                    <span class="status-badge ${imported ? 'active' : 'pending'}">
+                        ${imported ? '已导入' : '未导入'}
+                    </span>
+                </td>
+                <td style="font-size:0.75rem;">${escapeHtml(item.base_url)}</td>
+                <td>${escapeHtml(item.admin_email)}</td>
+                <td class="password-cell">
+                    <span class="password-hidden" title="悬停查看">${escapeHtml(item.admin_password)}</span>
+                </td>
+                <td style="font-size:0.72rem;">
+                    ${item.init_url ? `<a href="${escapeHtml(item.init_url)}" target="_blank" style="color: var(--primary-color);">${escapeHtml(item.init_url)}</a>` : '<span style="color: var(--text-muted);">-</span>'}
+                </td>
+                <td>
+                    <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">
+                        <button class="btn btn-primary btn-sm" onclick="importSingleCloudMail(${index})">${imported ? '重新导入' : '导入'}</button>
+                        <button class="btn btn-secondary btn-sm" onclick="copyCloudMailField(${index}, 'api')">复制 API</button>
+                        <button class="btn btn-secondary btn-sm" onclick="copyCloudMailField(${index}, 'email')">复制邮箱</button>
+                        <button class="btn btn-secondary btn-sm" onclick="copyCloudMailField(${index}, 'password')">复制密码</button>
+                        <button class="btn btn-secondary btn-sm" onclick="copyCloudMailField(${index}, 'all')">复制全部</button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
 }
 
 async function copyCloudMailField(index, field) {
@@ -565,6 +575,8 @@ async function loadCustomServices() {
                 else selectedCustom.delete(id);
             });
         });
+
+        renderCloudMailDiscoveryTable();
 
     } catch (error) {
         console.error('加载自定义邮箱服务失败:', error);
