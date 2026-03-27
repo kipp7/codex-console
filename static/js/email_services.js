@@ -95,6 +95,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadOutlookServices();
     loadCustomServices();
     loadTempmailConfig();
+    syncMainCloudMailDomains();
     loadCloudMailDiscovery();
     initEventListeners();
 });
@@ -183,10 +184,6 @@ async function loadCloudMailDiscovery() {
         const data = await api.get('/email-services/cloudmail/discovery');
         discoveredCloudMail = data.items || [];
 
-        if (discoveredCloudMail.length > 0) {
-            await importCloudMailItems(discoveredCloudMail, { silent: true, refreshDiscovery: false });
-        }
-
         if (discoveredCloudMail.length === 0) {
             elements.cloudmailDiscoveryTable.innerHTML = `
                 <tr>
@@ -237,6 +234,27 @@ async function loadCloudMailDiscovery() {
                 </td>
             </tr>
         `;
+    }
+}
+
+async function syncMainCloudMailDomains() {
+    try {
+        const payload = await api.get('/cloud-mail/main-domains');
+        const items = payload.items || [];
+        if (items.length === 0) {
+            return;
+        }
+        await importCloudMailItems(
+            items.map(item => ({
+                ...item,
+                base_url: item.base_url || (item.api_url ? item.api_url.replace(/\/api$/, '') : ''),
+                config_path: item.config_path || '',
+                domains: item.domains || [item.domain],
+            })),
+            { silent: true, refreshDiscovery: false }
+        );
+    } catch (error) {
+        console.error('自动同步主号 Cloud Mail 域名失败:', error);
     }
 }
 
