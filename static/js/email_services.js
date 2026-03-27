@@ -183,6 +183,10 @@ async function loadCloudMailDiscovery() {
         const data = await api.get('/email-services/cloudmail/discovery');
         discoveredCloudMail = data.items || [];
 
+        if (discoveredCloudMail.length > 0) {
+            await importCloudMailItems(discoveredCloudMail, { silent: true, refreshDiscovery: false });
+        }
+
         if (discoveredCloudMail.length === 0) {
             elements.cloudmailDiscoveryTable.innerHTML = `
                 <tr>
@@ -282,7 +286,7 @@ async function copyCloudMailField(index, field) {
 async function importSingleCloudMail(index) {
     const item = discoveredCloudMail[index];
     if (!item) return;
-    await importCloudMailItems([item]);
+    await importCloudMailItems([item], { silent: false, refreshDiscovery: true });
 }
 
 async function handleImportAllCloudMail() {
@@ -290,10 +294,14 @@ async function handleImportAllCloudMail() {
         toast.warning('没有可导入的 Cloud Mail 配置');
         return;
     }
-    await importCloudMailItems(discoveredCloudMail);
+    await importCloudMailItems(discoveredCloudMail, { silent: false, refreshDiscovery: true });
 }
 
-async function importCloudMailItems(items) {
+async function importCloudMailItems(items, options = {}) {
+    const {
+        silent = false,
+        refreshDiscovery = true,
+    } = options;
     try {
         const payload = {
             items: items.map(item => ({
@@ -309,12 +317,20 @@ async function importCloudMailItems(items) {
             }))
         };
         const result = await api.post('/email-services/cloudmail/import', payload);
-        toast.success(`已导入 ${result.count} 个 Cloud Mail 服务`);
+        if (!silent) {
+            toast.success(`已导入 ${result.count} 个 Cloud Mail 服务`);
+        }
         loadCustomServices();
         loadStats();
-        loadCloudMailDiscovery();
+        if (refreshDiscovery) {
+            loadCloudMailDiscovery();
+        }
     } catch (error) {
-        toast.error('导入失败: ' + error.message);
+        if (!silent) {
+            toast.error('导入失败: ' + error.message);
+        } else {
+            console.error('自动同步 Cloud Mail 服务失败:', error);
+        }
     }
 }
 
