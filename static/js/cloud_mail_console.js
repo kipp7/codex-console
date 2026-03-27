@@ -19,6 +19,8 @@ const summaryAdminEmailEl = document.getElementById('summary-admin-email');
 const summaryAdminPasswordEl = document.getElementById('summary-admin-password');
 const summaryApiUrlEl = document.getElementById('summary-api-url');
 const commandPreviewEl = document.getElementById('command-preview');
+const mainDomainsTableEl = document.getElementById('main-domains-table');
+const refreshMainDomainsBtn = document.getElementById('refresh-main-domains');
 const taskListEl = document.getElementById('task-list');
 const taskLabelEl = document.getElementById('task-label');
 const taskStatusEl = document.getElementById('task-status');
@@ -259,6 +261,39 @@ function renderDefaults(workflow, values) {
     flowDefaultsEl.innerHTML = chips.length ? chips.join('') : '<span class="default-chip">暂无默认配置</span>';
 }
 
+async function loadMainDomains() {
+    if (!mainDomainsTableEl) return;
+    mainDomainsTableEl.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">加载中...</td></tr>';
+    try {
+        const payload = await api.get('/cloud-mail/main-domains');
+        const items = payload.items || [];
+        if (items.length === 0) {
+            mainDomainsTableEl.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">暂无域名</td></tr>';
+            return;
+        }
+        mainDomainsTableEl.innerHTML = items.map((item) => `
+            <tr>
+                <td>${escapeHtml(item.domain)}</td>
+                <td>
+                    <code>${escapeHtml(item.api_url)}</code>
+                    <button class="btn btn-ghost btn-sm" style="margin-left:6px;" onclick="copyToClipboard('${escapeHtml(item.api_url)}')">📋</button>
+                </td>
+                <td>
+                    <code>${escapeHtml(item.admin_email)}</code>
+                    <button class="btn btn-ghost btn-sm" style="margin-left:6px;" onclick="copyToClipboard('${escapeHtml(item.admin_email)}')">📋</button>
+                </td>
+                <td>
+                    <code>${escapeHtml(item.admin_password)}</code>
+                    <button class="btn btn-ghost btn-sm" style="margin-left:6px;" onclick="copyToClipboard('${escapeHtml(item.admin_password)}')">📋</button>
+                </td>
+                <td>${escapeHtml(item.expires_at || '-')}</td>
+            </tr>
+        `).join('');
+    } catch (error) {
+        mainDomainsTableEl.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--danger-color);padding:20px;">${escapeHtml(error.message || '加载失败')}</td></tr>`;
+    }
+}
+
 function renderWorkflow() {
     const workflow = cloudMailState.presets.workflows[cloudMailState.activeWorkflow];
     const values = workflowDefaults(workflow);
@@ -427,6 +462,7 @@ async function bootCloudMailConsole() {
         cloudMailState.activeWorkflow = Object.keys(cloudMailState.presets.workflows)[0];
         renderWorkflowList();
         renderWorkflow();
+        await loadMainDomains();
         await refreshTaskList();
         await refreshTaskDetail();
         setInterval(() => refreshTaskList().catch(() => {}), 2000);
@@ -447,6 +483,7 @@ copyButton?.addEventListener('click', async () => {
         toast.error('复制失败');
     }
 });
+refreshMainDomainsBtn?.addEventListener('click', loadMainDomains);
 runButton?.addEventListener('click', runWorkflow);
 tabLogs?.addEventListener('click', () => switchDetailTab('logs'));
 tabResult?.addEventListener('click', () => switchDetailTab('result'));

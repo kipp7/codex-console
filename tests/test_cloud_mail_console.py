@@ -97,3 +97,30 @@ def test_cloud_mail_preview_api(tmp_path, monkeypatch):
     payload = response.json()
     assert "pretty_command" in payload
     assert "register_to_cloudflare_pipeline.py" in payload["pretty_command"]
+
+
+def test_main_domains_api(monkeypatch):
+    monkeypatch.setattr(
+        cloud_mail_tools,
+        "fetch_main_domains",
+        lambda: [
+            {
+                "domain": "demo.qzz.io",
+                "status": "ok",
+                "created_at": "20260327",
+                "expires_at": "20270327",
+                "nameservers": ["ns1.example.com", "ns2.example.com"],
+                "api_url": "https://demo.qzz.io/api",
+                "admin_email": "admin@demo.qzz.io",
+                "admin_password": "Admin123456",
+            }
+        ],
+    )
+
+    client = TestClient(create_app())
+    response = client.get("/api/cloud-mail/main-domains")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["domain"] == "demo.qzz.io"

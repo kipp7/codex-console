@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import requests
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
@@ -37,6 +38,7 @@ DEFAULT_CLOUDFLARE_API_TOKEN = "cfat_QaXV5zE4DjRZgtGKnlxIS7vUnGYaChDy8d5rKKTf9a6
 DEFAULT_CLOUDFLARE_ACCOUNT_ID = "4b43de7d2636147dbc38ef2ca08d9911"
 DEFAULT_MAIL_API_BASE = "https://api.tempmail.lol"
 DEFAULT_TURNSTILE_TOKEN = "invalid-test-token"
+DEFAULT_DIGITALPLAT_BASE_URL = "https://domain-api.digitalplat.org/api/v1"
 
 
 def get_toolkit_root() -> Path:
@@ -102,6 +104,9 @@ WORKFLOW_DEFS: dict[str, dict[str, Any]] = {
             {"name": "admin_localpart", "label": "管理员前缀", "type": "text", "default": "admin"},
             {"name": "repo_root", "label": "cloud-mail 仓库目录", "type": "text", "default": _default_cloud_mail_repo()},
             {"name": "records_file", "label": "DNS 模板文件", "type": "text"},
+            {"name": "digitalplat_proxy", "label": "DigitalPlat 代理", "type": "text", "placeholder": "http://127.0.0.1:7890"},
+            {"name": "digitalplat_cookie", "label": "DigitalPlat Cookie", "type": "textarea", "placeholder": "cf_clearance=...; other=..."},
+            {"name": "digitalplat_user_agent", "label": "DigitalPlat User-Agent", "type": "text"},
             {"name": "skip_r2", "label": "跳过 R2", "type": "boolean", "default": True},
         ],
     },
@@ -122,6 +127,9 @@ WORKFLOW_DEFS: dict[str, dict[str, Any]] = {
             {"name": "output", "label": "输出 CSV", "type": "text", "default": "domain_cloudflare_pipeline_results.csv"},
             {"name": "sleep_seconds", "label": "间隔秒数", "type": "number", "default": 0},
             {"name": "records_file", "label": "DNS 模板文件", "type": "text"},
+            {"name": "digitalplat_proxy", "label": "DigitalPlat 代理", "type": "text", "placeholder": "http://127.0.0.1:7890"},
+            {"name": "digitalplat_cookie", "label": "DigitalPlat Cookie", "type": "textarea", "placeholder": "cf_clearance=...; other=..."},
+            {"name": "digitalplat_user_agent", "label": "DigitalPlat User-Agent", "type": "text"},
             {"name": "dry_run", "label": "仅预览", "type": "boolean", "default": False},
         ],
     },
@@ -185,6 +193,22 @@ WORKFLOW_DEFS: dict[str, dict[str, Any]] = {
 class TaskCreateRequest(BaseModel):
     workflow: str
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+class MainDomainItem(BaseModel):
+    domain: str
+    status: str | None = None
+    created_at: str | None = None
+    expires_at: str | None = None
+    nameservers: list[str] = Field(default_factory=list)
+    api_url: str
+    admin_email: str
+    admin_password: str
+
+
+class MainDomainsResponse(BaseModel):
+    total: int
+    items: list[MainDomainItem]
 
 
 @dataclass(slots=True)
@@ -365,6 +389,9 @@ def build_command(workflow: str, raw_params: dict[str, Any]) -> dict[str, Any]:
         _append_optional(command, "--admin-localpart", params.get("admin_localpart"))
         _append_optional(command, "--repo-root", params.get("repo_root"))
         _append_optional(command, "--records-file", params.get("records_file"))
+        _append_optional(command, "--digitalplat-proxy", params.get("digitalplat_proxy"))
+        _append_optional(command, "--digitalplat-cookie", params.get("digitalplat_cookie"))
+        _append_optional(command, "--digitalplat-user-agent", params.get("digitalplat_user_agent"))
         _append_bool(command, "--skip-r2", _bool(params.get("skip_r2"), True))
 
     elif workflow == "register_pipeline":
@@ -391,6 +418,9 @@ def build_command(workflow: str, raw_params: dict[str, Any]) -> dict[str, Any]:
                 command += [flag, value]
         _append_optional(command, "--output", params.get("output"))
         _append_optional(command, "--records-file", params.get("records_file"))
+        _append_optional(command, "--digitalplat-proxy", params.get("digitalplat_proxy"))
+        _append_optional(command, "--digitalplat-cookie", params.get("digitalplat_cookie"))
+        _append_optional(command, "--digitalplat-user-agent", params.get("digitalplat_user_agent"))
         _append_bool(command, "--dry-run", _bool(params.get("dry_run"), False))
 
     elif workflow == "deploy_worker":
@@ -458,6 +488,46 @@ def build_command(workflow: str, raw_params: dict[str, Any]) -> dict[str, Any]:
         "command": command,
         "pretty_command": format_command(command),
     }
+
+
+def fetch_main_domains() -> list[dict[str, Any]]:
+    response = requests.get(
+        f"{DEFAULT_DIGITALPLAT_BASE_URL}/domains",
+        headers={
+            "Authorization": f"Bearer {DEFAULT_DIGITALPLAT_API_KEY}",
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.165 Safari/537.36",
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise RuntimeError("DigitalPlat domains response is not an object")
+    data = payload.get("data")
+    if not isinstance(data, list):
+        return []
+
+    items: list[dict[str, Any]] = []
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        domain = str(entry.get("domain") or "").strip().lower()
+        if not domain:
+            continue
+        items.append(
+            {
+                "domain": domain,
+                "status": str(entry.get("status") or "").strip() or None,
+                "created_at": str(entry.get("created_at") or "").strip() or None,
+                "expires_at": str(entry.get("expires_at") or "").strip() or None,
+                "nameservers": [str(item).strip() for item in (entry.get("nameservers") or []) if str(item).strip()],
+                "api_url": f"https://{domain}/api",
+                "admin_email": f"admin@{domain}",
+                "admin_password": "Admin123456",
+            }
+        )
+    return items
 
 
 def run_task(task_id: str) -> None:
@@ -545,6 +615,15 @@ async def get_workflows():
         "python": PYTHON,
         "workflows": WORKFLOW_DEFS,
     }
+
+
+@router.get("/main-domains", response_model=MainDomainsResponse)
+async def get_main_domains():
+    try:
+        items = fetch_main_domains()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"读取主号域名失败: {exc}") from exc
+    return MainDomainsResponse(total=len(items), items=[MainDomainItem(**item) for item in items])
 
 
 @router.post("/preview")
