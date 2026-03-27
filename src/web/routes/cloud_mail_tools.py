@@ -21,6 +21,7 @@ import requests
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from .cloud_mail_state import is_domain_disabled, load_disabled_domains
 
 router = APIRouter()
 
@@ -198,6 +199,7 @@ class TaskCreateRequest(BaseModel):
 class MainDomainItem(BaseModel):
     domain: str
     status: str | None = None
+    disabled: bool = False
     created_at: str | None = None
     expires_at: str | None = None
     nameservers: list[str] = Field(default_factory=list)
@@ -491,6 +493,7 @@ def build_command(workflow: str, raw_params: dict[str, Any]) -> dict[str, Any]:
 
 
 def fetch_main_domains() -> list[dict[str, Any]]:
+    disabled_domains = load_disabled_domains()
     response = requests.get(
         f"{DEFAULT_DIGITALPLAT_BASE_URL}/domains",
         headers={
@@ -519,6 +522,7 @@ def fetch_main_domains() -> list[dict[str, Any]]:
             {
                 "domain": domain,
                 "status": str(entry.get("status") or "").strip() or None,
+                "disabled": is_domain_disabled(domain, disabled_domains),
                 "created_at": str(entry.get("created_at") or "").strip() or None,
                 "expires_at": str(entry.get("expires_at") or "").strip() or None,
                 "nameservers": [str(item).strip() for item in (entry.get("nameservers") or []) if str(item).strip()],
@@ -527,7 +531,7 @@ def fetch_main_domains() -> list[dict[str, Any]]:
                 "admin_password": "Admin123456",
             }
         )
-    return items
+    return sorted(items, key=lambda item: (item.get("disabled", False), item.get("domain", "")))
 
 
 def run_task(task_id: str) -> None:

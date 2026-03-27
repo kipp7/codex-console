@@ -15,6 +15,12 @@ from ...database import crud
 from ...database.session import get_db
 from ...database.models import EmailService as EmailServiceModel
 from ...services import EmailServiceFactory, EmailServiceType
+from .cloud_mail_state import (
+    is_domain_disabled,
+    load_disabled_domains,
+    set_domain_disabled,
+    sync_imported_cloud_mail_service_state,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -108,6 +114,7 @@ class OutlookBatchImportResponse(BaseModel):
 class CloudMailDiscoveryItem(BaseModel):
     domain: str
     domains: List[str]
+    disabled: bool = False
     base_url: str
     admin_email: str
     admin_password: str
@@ -137,6 +144,10 @@ class CloudMailImportItem(BaseModel):
 
 class CloudMailImportRequest(BaseModel):
     items: List[CloudMailImportItem]
+
+
+class CloudMailDomainToggleRequest(BaseModel):
+    domain: str
 
 
 # ============== Helper Functions ==============
@@ -187,6 +198,7 @@ def discover_cloud_mail_configs() -> List[Dict[str, Any]]:
 
     discovered: List[Dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
+    disabled_domains = load_disabled_domains()
 
     def is_placeholder(value: str) -> bool:
         return "${" in value or value.strip().startswith("$")
@@ -238,6 +250,7 @@ def discover_cloud_mail_configs() -> List[Dict[str, Any]]:
             discovered.append({
                 "domain": domain,
                 "domains": domains,
+                "disabled": is_domain_disabled(domain, disabled_domains),
                 "base_url": base_url,
                 "admin_email": admin_email or f"admin@{domain}",
                 "admin_password": DEFAULT_CLOUDMAIL_ADMIN_PASSWORD,
@@ -305,6 +318,42 @@ async def get_cloud_mail_discovery():
     return CloudMailDiscoveryResponse(total=len(items), items=[CloudMailDiscoveryItem(**item) for item in items])
 
 
+@router.post("/cloudmail/disable")
+async def disable_cloud_mail_domain(request: CloudMailDomainToggleRequest):
+    """禁用 Cloud Mail 域名，并同步禁用已导入的 Cloud Mail 服务。"""
+    try:
+        result = set_domain_disabled(request.domain, True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    affected = sync_imported_cloud_mail_service_state(result["domain"], False)
+    return {
+        "success": True,
+        "domain": result["domain"],
+        "disabled": True,
+        "affected_services": affected,
+        "message": f"域名 {result['domain']} 已禁用",
+    }
+
+
+@router.post("/cloudmail/enable")
+async def enable_cloud_mail_domain(request: CloudMailDomainToggleRequest):
+    """恢复 Cloud Mail 域名可用状态，并重新启用已导入的 Cloud Mail 服务。"""
+    try:
+        result = set_domain_disabled(request.domain, False)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    affected = sync_imported_cloud_mail_service_state(result["domain"], True)
+    return {
+        "success": True,
+        "domain": result["domain"],
+        "disabled": False,
+        "affected_services": affected,
+        "message": f"域名 {result['domain']} 已恢复",
+    }
+
+
 @router.post("/cloudmail/import")
 async def import_cloud_mail_services(request: CloudMailImportRequest):
     """将发现到的 Cloud Mail 配置导入为自定义邮箱服务。"""
@@ -312,8 +361,20 @@ async def import_cloud_mail_services(request: CloudMailImportRequest):
         raise HTTPException(status_code=400, detail="没有可导入的项目")
 
     imported: List[Dict[str, Any]] = []
+    skipped_disabled: List[str] = []
+    disabled_domains = load_disabled_domains()
     with get_db() as db:
         for item in request.items:
+            item_domains = item.domains or [item.domain]
+            blocked_domains = [
+                domain
+                for domain in item_domains
+                if is_domain_disabled(domain, disabled_domains)
+            ]
+            if blocked_domains:
+                skipped_disabled.extend(blocked_domains)
+                continue
+
             service_name = item.name or f"CloudMail {item.domain}"
             service_config = {
                 "base_url": item.base_url.rstrip("/"),
@@ -353,7 +414,16 @@ async def import_cloud_mail_services(request: CloudMailImportRequest):
                 db.refresh(service)
                 imported.append({"id": service.id, "name": service.name, "updated": False})
 
-    return {"success": True, "count": len(imported), "items": imported}
+    if not imported and skipped_disabled:
+        skipped = ", ".join(sorted(set(skipped_disabled)))
+        raise HTTPException(status_code=400, detail=f"以下域名已禁用，不能导入: {skipped}")
+
+    return {
+        "success": True,
+        "count": len(imported),
+        "items": imported,
+        "skipped_disabled": sorted(set(skipped_disabled)),
+    }
 
 
 @router.get("/types")

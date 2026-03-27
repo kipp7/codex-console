@@ -233,19 +233,24 @@ function isCloudMailImported(item) {
     });
 }
 
+function getCloudMailStatusBadges(item, imported) {
+    const badges = [
+        `<span class="status-badge ${item.disabled ? 'disabled' : 'active'}">${item.disabled ? '已禁用' : '可用'}</span>`,
+        `<span class="status-badge ${imported ? 'active' : 'pending'}">${imported ? '已导入' : '未导入'}</span>`,
+    ];
+    return badges.join(' ');
+}
+
 function renderCloudMailDiscoveryTable() {
     if (!elements.cloudmailDiscoveryTable) return;
 
     elements.cloudmailDiscoveryTable.innerHTML = discoveredCloudMail.map((item, index) => {
         const imported = isCloudMailImported(item);
+        const importDisabled = Boolean(item.disabled);
         return `
             <tr>
                 <td>${escapeHtml(item.domain)}</td>
-                <td>
-                    <span class="status-badge ${imported ? 'active' : 'pending'}">
-                        ${imported ? '已导入' : '未导入'}
-                    </span>
-                </td>
+                <td style="display:flex;gap:6px;flex-wrap:wrap;">${getCloudMailStatusBadges(item, imported)}</td>
                 <td style="font-size:0.75rem;">${escapeHtml(item.base_url)}</td>
                 <td>${escapeHtml(item.admin_email)}</td>
                 <td class="password-cell">
@@ -256,7 +261,8 @@ function renderCloudMailDiscoveryTable() {
                 </td>
                 <td>
                     <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">
-                        <button class="btn btn-primary btn-sm" onclick="importSingleCloudMail(${index})">${imported ? '重新导入' : '导入'}</button>
+                        <button class="btn btn-primary btn-sm" onclick="importSingleCloudMail(${index})" ${importDisabled ? 'disabled' : ''}>${imported ? '重新导入' : '导入'}</button>
+                        <button class="btn btn-secondary btn-sm" onclick="toggleCloudMailDomain(${index})">${item.disabled ? '启用域名' : '禁用域名'}</button>
                         <button class="btn btn-secondary btn-sm" onclick="copyCloudMailField(${index}, 'api')">复制 API</button>
                         <button class="btn btn-secondary btn-sm" onclick="copyCloudMailField(${index}, 'email')">复制邮箱</button>
                         <button class="btn btn-secondary btn-sm" onclick="copyCloudMailField(${index}, 'password')">复制密码</button>
@@ -314,6 +320,10 @@ async function copyCloudMailField(index, field) {
 async function importSingleCloudMail(index) {
     const item = discoveredCloudMail[index];
     if (!item) return;
+    if (item.disabled) {
+        toast.warning(`域名 ${item.domain} 已禁用，不能导入`);
+        return;
+    }
     await importCloudMailItems([item], { silent: false, refreshDiscovery: true });
 }
 
@@ -322,7 +332,12 @@ async function handleImportAllCloudMail() {
         toast.warning('没有可导入的 Cloud Mail 配置');
         return;
     }
-    await importCloudMailItems(discoveredCloudMail, { silent: false, refreshDiscovery: true });
+    const enabledItems = discoveredCloudMail.filter(item => !item.disabled);
+    if (!enabledItems.length) {
+        toast.warning('当前发现的 Cloud Mail 域名都已禁用');
+        return;
+    }
+    await importCloudMailItems(enabledItems, { silent: false, refreshDiscovery: true });
 }
 
 async function importCloudMailItems(items, options = {}) {
@@ -346,7 +361,11 @@ async function importCloudMailItems(items, options = {}) {
         };
         const result = await api.post('/email-services/cloudmail/import', payload);
         if (!silent) {
-            toast.success(`已导入 ${result.count} 个 Cloud Mail 服务`);
+            const skipped = result.skipped_disabled || [];
+            const message = skipped.length
+                ? `已导入 ${result.count} 个服务，跳过 ${skipped.length} 个已禁用域名`
+                : `已导入 ${result.count} 个 Cloud Mail 服务`;
+            toast.success(message);
         }
         loadCustomServices();
         loadStats();
@@ -359,6 +378,32 @@ async function importCloudMailItems(items, options = {}) {
         } else {
             console.error('自动同步 Cloud Mail 服务失败:', error);
         }
+    }
+}
+
+async function toggleCloudMailDomain(index) {
+    const item = discoveredCloudMail[index];
+    if (!item) {
+        toast.error('未找到 Cloud Mail 域名');
+        return;
+    }
+
+    const targetDisabled = !item.disabled;
+    const actionText = targetDisabled ? '禁用' : '启用';
+    const confirmed = await confirm(`确定要${actionText}域名 "${item.domain}" 吗？`);
+    if (!confirmed) return;
+
+    try {
+        const path = targetDisabled ? '/email-services/cloudmail/disable' : '/email-services/cloudmail/enable';
+        const result = await api.post(path, { domain: item.domain });
+        toast.success(result.message || `域名已${actionText}`);
+        await Promise.all([
+            loadCloudMailDiscovery(),
+            loadCustomServices(),
+            loadStats(),
+        ]);
+    } catch (error) {
+        toast.error(`${actionText}失败: ${error.message}`);
     }
 }
 

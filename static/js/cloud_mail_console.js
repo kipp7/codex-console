@@ -261,19 +261,45 @@ function renderDefaults(workflow, values) {
     flowDefaultsEl.innerHTML = chips.length ? chips.join('') : '<span class="default-chip">暂无默认配置</span>';
 }
 
+function getMainDomainStatusCell(item) {
+    const domainStatus = item.disabled
+        ? '<span class="status-badge disabled">已禁用</span>'
+        : '<span class="status-badge completed">可用</span>';
+    const providerStatus = item.status
+        ? `<span class="status-badge">${escapeHtml(item.status)}</span>`
+        : '';
+    return [domainStatus, providerStatus].filter(Boolean).join(' ');
+}
+
+async function toggleMainDomain(domain, disabled) {
+    const actionText = disabled ? '禁用' : '启用';
+    const confirmed = await confirm(`确定要${actionText}域名 "${domain}" 吗？`);
+    if (!confirmed) return;
+
+    try {
+        const endpoint = disabled ? '/email-services/cloudmail/disable' : '/email-services/cloudmail/enable';
+        const result = await api.post(endpoint, { domain });
+        toast.success(result.message || `域名已${actionText}`);
+        await loadMainDomains();
+    } catch (error) {
+        toast.error(`${actionText}失败: ${error.message}`);
+    }
+}
+
 async function loadMainDomains() {
     if (!mainDomainsTableEl) return;
-    mainDomainsTableEl.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">加载中...</td></tr>';
+    mainDomainsTableEl.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px;">加载中...</td></tr>';
     try {
         const payload = await api.get('/cloud-mail/main-domains');
         const items = payload.items || [];
         if (items.length === 0) {
-            mainDomainsTableEl.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">暂无域名</td></tr>';
+            mainDomainsTableEl.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px;">暂无域名</td></tr>';
             return;
         }
         mainDomainsTableEl.innerHTML = items.map((item) => `
             <tr>
                 <td>${escapeHtml(item.domain)}</td>
+                <td style="display:flex;gap:6px;flex-wrap:wrap;">${getMainDomainStatusCell(item)}</td>
                 <td>
                     <code>${escapeHtml(item.api_url)}</code>
                     <button class="btn btn-ghost btn-sm" style="margin-left:6px;" onclick="copyToClipboard('${escapeHtml(item.api_url)}')">📋</button>
@@ -287,10 +313,13 @@ async function loadMainDomains() {
                     <button class="btn btn-ghost btn-sm" style="margin-left:6px;" onclick="copyToClipboard('${escapeHtml(item.admin_password)}')">📋</button>
                 </td>
                 <td>${escapeHtml(item.expires_at || '-')}</td>
+                <td>
+                    <button class="btn btn-secondary btn-sm" onclick="toggleMainDomain('${escapeHtml(item.domain)}', ${!item.disabled})">${item.disabled ? '启用域名' : '禁用域名'}</button>
+                </td>
             </tr>
         `).join('');
     } catch (error) {
-        mainDomainsTableEl.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--danger-color);padding:20px;">${escapeHtml(error.message || '加载失败')}</td></tr>`;
+        mainDomainsTableEl.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--danger-color);padding:20px;">${escapeHtml(error.message || '加载失败')}</td></tr>`;
     }
 }
 

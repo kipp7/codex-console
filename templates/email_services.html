@@ -139,7 +139,7 @@
                 <div class="card-body">
                     <div style="display:flex;justify-content:space-between;align-items:center;gap:var(--spacing-md);margin-bottom:var(--spacing-md);flex-wrap:wrap;">
                         <p style="margin:0;color:var(--text-secondary);font-size:0.875rem;">
-                            自动读取 `12_Pool-of-numbers/cloud-mail/mail-worker/wrangler*.toml`，提取当前 Cloud Mail 域名配置并导入到自定义邮箱服务。
+                            自动读取 `12_Pool-of-numbers/cloud-mail/mail-worker/wrangler*.toml`。禁用后的域名会保留展示，但不会再参与导入。
                         </p>
                         <button class="btn btn-primary btn-sm" id="import-all-cloudmail-btn">全部导入</button>
                     </div>
@@ -148,7 +148,7 @@
                             <thead>
                                 <tr>
                                     <th>域名</th>
-                                    <th>导入状态</th>
+                                    <th>状态</th>
                                     <th>API 地址</th>
                                     <th>管理员邮箱</th>
                                     <th>管理员密码</th>

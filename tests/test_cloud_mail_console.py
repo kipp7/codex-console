@@ -100,6 +100,7 @@ def test_cloud_mail_preview_api(tmp_path, monkeypatch):
 
 
 def test_main_domains_api(monkeypatch):
+    monkeypatch.setattr(cloud_mail_tools, "load_disabled_domains", lambda: {"demo.qzz.io"})
     monkeypatch.setattr(
         cloud_mail_tools,
         "fetch_main_domains",
@@ -107,6 +108,7 @@ def test_main_domains_api(monkeypatch):
             {
                 "domain": "demo.qzz.io",
                 "status": "ok",
+                "disabled": True,
                 "created_at": "20260327",
                 "expires_at": "20270327",
                 "nameservers": ["ns1.example.com", "ns2.example.com"],
@@ -124,3 +126,4 @@ def test_main_domains_api(monkeypatch):
     payload = response.json()
     assert payload["total"] == 1
     assert payload["items"][0]["domain"] == "demo.qzz.io"
+    assert payload["items"][0]["disabled"] is True
